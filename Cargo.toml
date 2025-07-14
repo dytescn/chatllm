@@ -1,0 +1,9 @@
+[package]
+name = "chatllm"
+version = "0.1.0"
+edition = "2024"
+publish = ["crates-io"]
+
+[dependencies]
+llama-cpp-2 = { version = "0.1.109", default-features = false  } # CUDA/ROCm 请改成 cuda / hip
+anyhow       = "1.0"
