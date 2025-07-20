@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "random": "c",
+        "filesystem": "c",
+        "ggml-common.h": "c",
+        "ggml-backend-impl.h": "c",
+        "ggml-impl.h": "c",
+        "compare": "c",
+        "cstdint": "c",
+        "ggml.h": "c"
+    }
+}
