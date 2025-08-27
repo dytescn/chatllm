@@ -1,5 +1,0 @@
-# ninja log v6
-45	160	7747264642835066	CMakeFiles/ggml.dir/CMakeFiles/3.30.4/CompilerIdCXX/CMakeCXXCompilerId.cpp.obj	83377b49488e799f
-6	41	7747267552210566	D:/codes/github/dytescn/chatllm/cpkg/build/CMakeFiles/cmake.verify_globs	77ba3a0a4e32a2ed
-43	146	7747264642825111	CMakeFiles/ggml.dir/CMakeFiles/3.30.4/CompilerIdC/CMakeCCompilerId.c.obj	f1fb0687ae8823f6
-41	382	7747267555798016	build.ninja	7f780f71b1dff068
