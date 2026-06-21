@@ -36,3 +36,14 @@ __pycache__/
 # Model files
 ggml-model-f16.bin
 *.bat
+
+
+# Added by cargo
+
+/target
+Cargo.lock
+chat
+model
+cyctron
+# Added by
+
