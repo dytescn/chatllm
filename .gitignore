@@ -43,7 +43,7 @@ ggml-model-f16.bin
 /target
 Cargo.lock
 chat
-model
+models
 cyctron
 # Added by
 
