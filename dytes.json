@@ -1,0 +1,8 @@
+{
+  "name": "chatllm",
+  "version": "1.0.0",
+  "description": "system for ai chat",
+  "keywords": ["chat", "ai", "llm", "system"],
+  "author": "funxdata",
+  "type": "system"
+}
