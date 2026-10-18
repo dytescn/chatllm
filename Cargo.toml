@@ -9,10 +9,10 @@ name = "chatllm"        # 输出库名：librust_lib.so / rust_lib.dll
 
 
 [dependencies]
-anyhow = "1.0.102"
-encoding_rs = "0.8.35"
-llama-cpp-2 = "0.1.150"
 libc = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
+anyhow = "1.0.102"
+uuid = { version = "1", features = ["v4"] }
+
