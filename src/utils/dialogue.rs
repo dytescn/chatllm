@@ -214,6 +214,19 @@ pub fn list_messages(
     let mut list = db_query(uuid, &sql)
         .with_context(|| format!("查询 {} messages 失败, sql={}", uuid, sql))?;
 
+    // 每条消息附带 Markdown → HTML（markparse），供前端直接渲染
+    for row in list.iter_mut() {
+        if let Some(obj) = row.as_object_mut() {
+            let content = obj
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            let html = crate::utils::markparse::to_html(&content).unwrap_or_default();
+            obj.insert("content_html".to_string(), Value::String(html));
+        }
+    }
+
     // 无游标 / before 时取的是 DESC，反转成 ASC 返回
     if before_id.is_some() || (before_id.is_none() && after_id.is_none()) {
         list.reverse();

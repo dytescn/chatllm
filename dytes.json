@@ -1,8 +1,27 @@
 {
   "name": "chatllm",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "system for ai chat",
-  "keywords": ["chat", "ai", "llm", "system"],
+  "keywords": [
+    "chat",
+    "ai",
+    "llm",
+    "system"
+  ],
   "author": "funxdata",
-  "type": "sys"
+  "type": "sys",
+  "dependencies-sys": {
+    "database": "1.0.2",
+    "markparse": "1.0.0"
+  },
+  "dependencies-web": {
+    "setting": "1.0.0",
+    "chat_ui": "1.0.6"
+  },
+  "dependencies-model": {
+    "qwen3-embed": "1.0.0"
+  },
+  "exports": {
+    "./target/release/chatllm.dll": "chatllm.dll"
+  }
 }

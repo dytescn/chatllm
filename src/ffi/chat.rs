@@ -52,6 +52,7 @@ pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_
                 "created": out.created,
                 "prompt": req.prompt,
                 "content": out.content,
+                "content_html": out.content_html,
                 "max_tokens": req.max_tokens,
                 "keyword": req.keyword,
             }),

@@ -1,13 +1,14 @@
 // src/ffi/run.rs
-use crate::utils::dialogue::{
-    append_message, create_dialogue, is_valid_uuid, update_keyword,
-};
+use crate::utils::dialogue::{append_message, create_dialogue, is_valid_uuid, update_keyword};
+use crate::utils::markparse::to_html;
 use crate::utils::siliconflow::chat_single;
 
 pub struct ChatOutcome {
     pub uuid: String,
     pub created: bool,
     pub content: String,
+    /// assistant 回复的 Markdown → HTML（转译失败时为空字符串，不阻断对话）
+    pub content_html: String,
 }
 
 pub enum ChatFlowError {
@@ -49,7 +50,8 @@ impl ChatFlowError {
 /// 3) 续聊时更新 keyword
 /// 4) 写 user 消息
 /// 5) 调 siliconflow 拿 content
-/// 6) 写 assistant 消息
+/// 6) 把 content 转成 HTML（markparse，失败降级）
+/// 7) 写 assistant 消息
 pub fn run_chat(
     prompt: &str,
     uuid: Option<&str>,
@@ -97,9 +99,23 @@ pub fn run_chat(
         Err(e) => return Err(ChatFlowError::SiliconFlow(e.to_string())),
     };
 
+    // Markdown 转译只影响返回给前端的 HTML，原文仍写入消息表；失败不阻断对话。
+    let content_html = match to_html(&content) {
+        Ok(html) => html,
+        Err(e) => {
+            eprintln!("[chatllm] markdown 转译失败，降级为原文: {:#}", e);
+            String::new()
+        }
+    };
+
     if let Err(e) = append_message(&uuid, "assistant", &content) {
         return Err(ChatFlowError::AppendAssistant(e.to_string()));
     }
 
-    Ok(ChatOutcome { uuid, created, content })
+    Ok(ChatOutcome {
+        uuid,
+        created,
+        content,
+        content_html,
+    })
 }

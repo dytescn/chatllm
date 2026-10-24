@@ -1,6 +1,7 @@
 pub mod cjson;
 pub mod db;
 pub mod dialogue;
+pub mod markparse;
 pub mod siliconflow;
 // pub mod config;
 // pub mod generate;
