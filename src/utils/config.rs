@@ -18,7 +18,7 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            model_path: "./models/funxdata_local.gguf",
+            model_path: "./models/qwen3-embed/qwen3-embedding-0.6.gguf",
             prompt: "",
             max_gen_tokens: 128,
             ctx_size: 2048,

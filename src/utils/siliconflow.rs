@@ -4,41 +4,30 @@ use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
+use libloading::Library;
 
 /// siliconflow 动态库路径（相对 cwd = /home/funx/app/piksel）
+#[cfg(windows)]
+const SO_PATH: &str = "./libary/libsiliconflow_t2t.dll";
+#[cfg(not(windows))]
 const SO_PATH: &str = "./libary/libsiliconflow_t2t.so";
 
 const OUT_BUF_SIZE: usize = 65536;
 
 type PostChatFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 
+static CHAT_LIB: OnceLock<Library> = OnceLock::new();
 static CHAT_FN: OnceLock<PostChatFn> = OnceLock::new();
 
 fn load_chat_fn() -> Result<PostChatFn> {
-    let sym_name = CString::new("post_chat").unwrap();
-    let path = CString::new(SO_PATH).context("构造 .so 路径失败")?;
-
-    // 关键：只 dlopen 指定路径，RTLD_LOCAL 防止符号外溢，绝不走 RTLD_DEFAULT
-    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        let err = unsafe {
-            let e = libc::dlerror();
-            if e.is_null() {
-                "unknown dlopen error".to_string()
-            } else {
-                CStr::from_ptr(e).to_string_lossy().into_owned()
-            }
-        };
-        anyhow::bail!("dlopen {} 失败: {}", SO_PATH, err);
-    }
-
-    let ptr = unsafe { libc::dlsym(handle, sym_name.as_ptr()) };
-    if ptr.is_null() {
-        anyhow::bail!("dlsym post_chat 失败");
-    }
-
-    let f: PostChatFn = unsafe { std::mem::transmute(ptr) };
-    eprintln!("[siliconflow] 显式 dlopen {} 成功", SO_PATH);
+    let lib = unsafe { Library::new(SO_PATH) }
+        .with_context(|| format!("加载 {} 失败", SO_PATH))?;
+    let f = unsafe {
+        *lib.get::<PostChatFn>(b"post_chat")
+            .context("dlsym post_chat 失败")?
+    };
+    let _ = CHAT_LIB.set(lib);
+    eprintln!("[siliconflow] 加载 {} 成功", SO_PATH);
     Ok(f)
 }
 

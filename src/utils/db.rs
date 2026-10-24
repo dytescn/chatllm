@@ -4,8 +4,12 @@ use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
+use libloading::Library;
 
 /// database.so 路径（相对 cwd = /home/funx/app/piksel）
+#[cfg(windows)]
+const DB_SO_PATH: &str = "./libary/database.dll";
+#[cfg(not(windows))]
 const DB_SO_PATH: &str = "./libary/database.so";
 
 /// 输出缓冲区大小
@@ -13,41 +17,18 @@ const OUT_BUF_SIZE: usize = 65536;
 
 type PostDbQueryFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 
+static DB_LIB: OnceLock<Library> = OnceLock::new();
 static DB_QUERY_FN: OnceLock<PostDbQueryFn> = OnceLock::new();
 
 fn load_db_query() -> Result<PostDbQueryFn> {
-    // 优先 RTLD_DEFAULT（piksel 可能已加载 database.so）
-    let sym_name = CString::new("post_db_query").unwrap();
-    let existing = unsafe { libc::dlsym(libc::RTLD_DEFAULT, sym_name.as_ptr()) };
-    if !existing.is_null() {
-        let f: PostDbQueryFn = unsafe { std::mem::transmute(existing) };
-        eprintln!("[db] 使用 RTLD_DEFAULT 找到 post_db_query");
-        return Ok(f);
-    }
-
-    // 显式 dlopen
-    let path = CString::new(DB_SO_PATH).context("构造 .so 路径失败")?;
-    let handle =
-        unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
-    if handle.is_null() {
-        let err = unsafe {
-            let e = libc::dlerror();
-            if e.is_null() {
-                "unknown dlopen error".to_string()
-            } else {
-                CStr::from_ptr(e).to_string_lossy().into_owned()
-            }
-        };
-        anyhow::bail!("dlopen {} 失败: {}", DB_SO_PATH, err);
-    }
-
-    let ptr = unsafe { libc::dlsym(handle, sym_name.as_ptr()) };
-    if ptr.is_null() {
-        anyhow::bail!("dlsym post_db_query 失败");
-    }
-
-    let f: PostDbQueryFn = unsafe { std::mem::transmute(ptr) };
-    eprintln!("[db] 显式 dlopen {} 成功", DB_SO_PATH);
+    let lib = unsafe { Library::new(DB_SO_PATH) }
+        .with_context(|| format!("加载 {} 失败", DB_SO_PATH))?;
+    let f = unsafe {
+        *lib.get::<PostDbQueryFn>(b"post_db_query")
+            .context("dlsym post_db_query 失败")?
+    };
+    let _ = DB_LIB.set(lib);
+    eprintln!("[db] 加载 {} 成功", DB_SO_PATH);
     Ok(f)
 }
 
