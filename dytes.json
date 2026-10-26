@@ -12,6 +12,7 @@
   "type": "sys",
   "dependencies-sys": {
     "database": "1.0.2",
+    "designdb": "1.0.0",
     "markparse": "1.0.0"
   },
   "dependencies-web": {

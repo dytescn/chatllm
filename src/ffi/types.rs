@@ -8,6 +8,11 @@ pub struct ChatReq {
     pub uuid: Option<String>,
     pub name: Option<String>,
     pub keyword: Option<String>,
+    pub use_skills: Option<bool>,
+    pub skill_categories: Option<Vec<String>>,
+    pub skill_ids: Option<Vec<String>>,
+    pub system_prompt: Option<String>,
+    pub refresh_system_prompt: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -20,6 +25,8 @@ pub struct DialogueUpdateReq {
     pub model_config: Option<String>,
     pub is_pinned: Option<i64>,
     pub is_archived: Option<i64>,
+    pub session_id: Option<String>,
+    pub show_status: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

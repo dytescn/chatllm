@@ -76,6 +76,10 @@ await fetch("http://127.0.0.1:44944/database", {
         model_config TEXT,
         is_pinned INTEGER NOT NULL DEFAULT 0,
         is_archived INTEGER NOT NULL DEFAULT 0,
+        session_id TEXT NOT NULL DEFAULT '',
+        show_status INTEGER NOT NULL DEFAULT 1,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        last_seq INTEGER NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );`,
@@ -197,3 +201,155 @@ await fetch("http://127.0.0.1:44944/database", {
 });
 
 console.log("dialogue 初始化完成（含 session / skills）");
+
+// ==================== embedding 分类 / 分片元数据 ====================
+// 向量数据在 database/embedding_<category>_<n>.db 的 prompts_embedding 表；
+// 这里只建分类与分片注册表。
+await fetch("http://127.0.0.1:44944/database", {
+  method: "POST",
+  headers: { "Content-Type": "application/libary", "FFI-Symbol": "db_update" },
+  body: JSON.stringify({
+    path: "./dialogue",
+    sql: `CREATE TABLE IF NOT EXISTS embedding_category (
+        code TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        sort INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );`,
+  }),
+});
+
+await fetch("http://127.0.0.1:44944/database", {
+  method: "POST",
+  headers: { "Content-Type": "application/libary", "FFI-Symbol": "db_update" },
+  body: JSON.stringify({
+    path: "./dialogue",
+    sql: `CREATE TABLE IF NOT EXISTS embedding_shard (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        shard_no INTEGER NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        row_count INTEGER NOT NULL DEFAULT 0,
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        state INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(category, shard_no)
+    );`,
+  }),
+});
+
+await fetch("http://127.0.0.1:44944/database", {
+  method: "POST",
+  headers: { "Content-Type": "application/libary", "FFI-Symbol": "db_update" },
+  body: JSON.stringify({
+    path: "./dialogue",
+    sql: `CREATE INDEX IF NOT EXISTS idx_embedding_shard_active
+        ON embedding_shard(category, state);`,
+  }),
+});
+
+await fetch("http://127.0.0.1:44944/database", {
+  method: "POST",
+  headers: { "Content-Type": "application/libary", "FFI-Symbol": "db_update" },
+  body: JSON.stringify({
+    path: "./dialogue",
+    sql: `INSERT OR IGNORE INTO embedding_category (code, name, sort)
+        VALUES ('plugin', '插件能力', 10);`,
+  }),
+});
+
+await fetch("http://127.0.0.1:44944/database", {
+  method: "POST",
+  headers: { "Content-Type": "application/libary", "FFI-Symbol": "db_update" },
+  body: JSON.stringify({
+    path: "./dialogue",
+    sql: `INSERT OR IGNORE INTO embedding_category (code, name, sort)
+        VALUES ('prompt', '提示词', 20);`,
+  }),
+});
+
+await fetch("http://127.0.0.1:44944/database", {
+  method: "POST",
+  headers: { "Content-Type": "application/libary", "FFI-Symbol": "db_update" },
+  body: JSON.stringify({
+    path: "./dialogue",
+    sql: `INSERT OR IGNORE INTO embedding_category (code, name, sort)
+        VALUES ('skill', '技能', 30);`,
+  }),
+});
+
+await fetch("http://127.0.0.1:44944/database", {
+  method: "POST",
+  headers: { "Content-Type": "application/libary", "FFI-Symbol": "db_update" },
+  body: JSON.stringify({
+    path: "./dialogue",
+    sql: `INSERT OR IGNORE INTO embedding_category (code, name, sort)
+        VALUES ('material', '素材', 40);`,
+  }),
+});
+
+console.log("embedding 分类 / 分片元数据初始化完成");
+
+// ==================== designdb（对话数据） ====================
+// 对话与消息已迁到 designdb；上面 SQLite 表只保留 session / skills /
+// prompts / embedding 分类与分片元数据，直到后续迁移完成。
+const DESIGNDB_URL = "http://127.0.0.1:44944/libdesigndb";
+
+async function designdbCall(symbol: string, body: unknown) {
+  const res = await fetch(DESIGNDB_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/libary",
+      "FFI-Symbol": symbol,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null) as any;
+  if (!data || (data.code !== 200 && data.code !== 0)) {
+    console.warn(`[designdb] ${symbol} 失败:`, data);
+  }
+  return data;
+}
+
+const meta = await designdbCall("db_query", {
+  path: "chatllm",
+  collection: "meta",
+  filter: { _id: "schema" },
+  limit: 1,
+});
+if (!Array.isArray(meta?.data) || meta.data.length === 0) {
+  await designdbCall("db_insert", {
+    path: "chatllm",
+    collection: "meta",
+    doc: {
+      _id: "schema",
+      version: 2,
+      engine: "designdb",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    },
+  });
+}
+
+await designdbCall("db_create_index", {
+  path: "chatllm",
+  collection: "dialogues",
+  index: {
+    key: { is_archived: 1, is_pinned: -1, created_at: -1 },
+    name: "idx_dialogues_list",
+  },
+});
+
+await designdbCall("db_create_index", {
+  path: "chatllm",
+  collection: "messages",
+  index: {
+    key: { dialogue_id: 1, seq: 1 },
+    name: "idx_messages_dialogue_seq",
+    unique: true,
+  },
+});
+
+console.log("designdb 初始化完成（chatllm / meta + 索引）");

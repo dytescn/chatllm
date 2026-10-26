@@ -17,18 +17,20 @@ const OUT_BUF_SIZE: usize = 65536;
 
 type PostDbQueryFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 type PostDbInsertFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
+type PostDbUpdateFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 
 static DB_LIB: OnceLock<Library> = OnceLock::new();
 static DB_QUERY_FN: OnceLock<PostDbQueryFn> = OnceLock::new();
 static DB_INSERT_FN: OnceLock<PostDbInsertFn> = OnceLock::new();
+static DB_UPDATE_FN: OnceLock<PostDbUpdateFn> = OnceLock::new();
 
 fn ensure_library() -> Result<&'static Library> {
     if let Some(lib) = DB_LIB.get() {
         return Ok(lib);
     }
 
-    let lib = unsafe { Library::new(DB_SO_PATH) }
-        .with_context(|| format!("加载 {} 失败", DB_SO_PATH))?;
+    let lib =
+        unsafe { Library::new(DB_SO_PATH) }.with_context(|| format!("加载 {} 失败", DB_SO_PATH))?;
     let _ = DB_LIB.set(lib);
     eprintln!("[db] 加载 {} 成功", DB_SO_PATH);
 
@@ -58,6 +60,19 @@ fn db_insert_fn() -> Result<PostDbInsertFn> {
             .context("dlsym post_db_insert 失败")?
     };
     let _ = DB_INSERT_FN.set(f);
+    Ok(f)
+}
+
+fn db_update_fn() -> Result<PostDbUpdateFn> {
+    if let Some(f) = DB_UPDATE_FN.get() {
+        return Ok(*f);
+    }
+    let lib = ensure_library()?;
+    let f = unsafe {
+        *lib.get::<PostDbUpdateFn>(b"post_db_update")
+            .context("dlsym post_db_update 失败")?
+    };
+    let _ = DB_UPDATE_FN.set(f);
     Ok(f)
 }
 
@@ -111,14 +126,28 @@ pub fn db_execute(db_name: &str, sql: &str) -> Result<()> {
     Ok(())
 }
 
+/// 执行更新 / 删除语句。
+pub fn db_update(db_name: &str, sql: &str) -> Result<()> {
+    let _ = call_ffi(db_update_fn()?, db_name, sql)?;
+    Ok(())
+}
+
 fn extract_rows(v: &Value) -> Vec<Value> {
     if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
         return arr.clone();
     }
-    if let Some(arr) = v.get("data").and_then(|d| d.get("list")).and_then(|l| l.as_array()) {
+    if let Some(arr) = v
+        .get("data")
+        .and_then(|d| d.get("list"))
+        .and_then(|l| l.as_array())
+    {
         return arr.clone();
     }
-    if let Some(arr) = v.get("data").and_then(|d| d.get("rows")).and_then(|r| r.as_array()) {
+    if let Some(arr) = v
+        .get("data")
+        .and_then(|d| d.get("rows"))
+        .and_then(|r| r.as_array())
+    {
         return arr.clone();
     }
     if let Some(arr) = v.get("list").and_then(|l| l.as_array()) {

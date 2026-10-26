@@ -1,5 +1,5 @@
 // src/ffi/chat.rs
-use crate::ffi::run::run_chat;
+use crate::ffi::run::{run_chat, ChatOptions};
 use crate::ffi::types::{
     ChatDetailReq, ChatReq, DialogueListReq, DialogueSearchReq, DialogueUpdateReq,
 };
@@ -38,11 +38,20 @@ pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_
         Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
     };
 
+    let options = ChatOptions {
+        use_skills: req.use_skills.unwrap_or(false),
+        skill_categories: req.skill_categories.clone().unwrap_or_default(),
+        skill_ids: req.skill_ids.clone().unwrap_or_default(),
+        system_prompt: req.system_prompt.clone(),
+        refresh_system_prompt: req.refresh_system_prompt.unwrap_or(false),
+    };
+
     match run_chat(
         &req.prompt,
         req.uuid.as_deref(),
         req.name.as_deref(),
         req.keyword.as_deref(),
+        &options,
     ) {
         Ok(out) => write_success(
             json_out,
@@ -55,6 +64,10 @@ pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_
                 "content_html": out.content_html,
                 "max_tokens": req.max_tokens,
                 "keyword": req.keyword,
+                "session_id": out.session_id,
+                "system_prompt": out.system_prompt,
+                "skills": out.skills,
+                "truncated": out.truncated,
             }),
         ),
         Err(e) => write_error(json_out, e.code(), &e.message()),
@@ -111,6 +124,8 @@ pub extern "C" fn post_dialogue_update(json_in: *const c_char, json_out: *mut c_
         model_config: req.model_config.as_deref(),
         is_pinned: req.is_pinned,
         is_archived: req.is_archived,
+        session_id: req.session_id.as_deref(),
+        show_status: req.show_status,
     };
     match update_dialogue(&req.id, &patch) {
         Ok(_) => write_success(json_out, "success", json!({ "id": req.id })),

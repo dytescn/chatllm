@@ -1,10 +1,14 @@
 pub mod cjson;
 pub mod config;
 pub mod db;
+pub mod designdb;
 pub mod dialogue;
 pub mod embed;
+pub mod embedding_store;
 pub mod loader;
 pub mod markparse;
+pub mod material_embed;
 pub mod plugin_embed;
 pub mod plugin_lib;
 pub mod siliconflow;
+pub mod skills;

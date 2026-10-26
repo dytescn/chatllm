@@ -49,8 +49,8 @@ fn call(symbol: &str, request: Value) -> Result<Value> {
     let text = unsafe { CStr::from_ptr(output.as_ptr() as *const c_char) }
         .to_str()
         .context("plugin_lib 响应非 UTF-8")?;
-    let value: Value =
-        serde_json::from_str(text).with_context(|| format!("plugin_lib {symbol} 响应解析失败: {text}"))?;
+    let value: Value = serde_json::from_str(text)
+        .with_context(|| format!("plugin_lib {symbol} 响应解析失败: {text}"))?;
 
     let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
     if code != 200 {
