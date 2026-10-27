@@ -215,19 +215,42 @@ pub fn create_dialogue(
     keyword: &str,
     system_prompt: Option<&str>,
 ) -> Result<String> {
+    create_dialogue_with(None, title, model_name, keyword, system_prompt, 1)
+}
+
+/// 新建对话，可指定 `dialogue.id`（如 `plugin_uuid`）与 `show_status`。
+///
+/// `show_status = 2` 的对话不会出现在 `list_dialogue` 的普通列表中。
+pub fn create_dialogue_with(
+    id: Option<&str>,
+    title: &str,
+    model_name: &str,
+    keyword: &str,
+    system_prompt: Option<&str>,
+    show_status: i64,
+) -> Result<String> {
     ensure_dialogue_schema()?;
-    let uuid = uuid::Uuid::new_v4().to_string();
+    let uuid = match id {
+        Some(id) => {
+            if !valid_uuid(id) {
+                bail!("非法对话 id: {}", id);
+            }
+            id.to_string()
+        }
+        None => uuid::Uuid::new_v4().to_string(),
+    };
     let sql = format!(
         "INSERT INTO dialogue
          (id, title, keyword, model_name, system_prompt, model_config,
           is_pinned, is_archived, session_id, show_status, message_count, last_seq,
           created_at, updated_at)
-         VALUES ({}, {}, {}, {}, {}, NULL, 0, 0, '', 1, 0, 0, datetime('now'), datetime('now'))",
+         VALUES ({}, {}, {}, {}, {}, NULL, 0, 0, '', {}, 0, 0, datetime('now'), datetime('now'))",
         esc(&uuid),
         esc(title),
         esc(keyword),
         esc(model_name),
         optional_str(system_prompt),
+        show_status,
     );
     db_execute(DIALOGUE_DB, &sql).with_context(|| format!("插入对话 {} 失败", uuid))?;
     Ok(uuid)

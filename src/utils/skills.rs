@@ -1,14 +1,14 @@
 // src/utils/skills.rs
-//! skills 索引（SQLite `dialogue.db`）+ 完整内容（`./designdb/skills`）读取与 system prompt 组装。
+//! 通过 `plugin_lib.get_skills` 读取技能索引与正文，并组装 system prompt。
 //!
-//! 目标结构：
-//! - SQLite：id / name / description / category / is_system / is_enabled / sort / version
-//! - designdb：`./designdb/skills` 的 `skills` 集合，存 content / trigger / params_schema
+//! 所有技能信息（索引 / 正文）统一由 `designplugin_lib` 提供：
+//! `skills` 表存索引与基础信息，完整 `skills.json` 存 `designdb`；
+//! chatllm 不直接读取 `skills` 表或 `designdb`。
 
-use crate::utils::{db, designdb};
+use crate::utils::plugin_lib;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 const BASE_SYSTEM_PROMPT: &str = "你是一个有用的助手。";
 const MAX_SKILLS: usize = 20;
@@ -112,12 +112,14 @@ fn compose(base: &str, skills: &[SkillRow]) -> String {
 /// 读取 skills 索引与完整内容，组装 system prompt。
 ///
 /// - `use_skills=false`：只返回基础 prompt；
+/// - `plugin_uuid` 非空：由 `plugin_lib.get_skills` 按插件过滤；
 /// - `skill_ids` 非空：只取这些技能；
 /// - `skill_categories` 非空：只取这些分类；
-/// - 两者都为空：全部启用技能；
+/// - 都为空：全部启用技能；
 /// - `explicit`：显式基础 prompt，优先于内置基础 prompt。
 pub fn build_system_prompt(
     use_skills: bool,
+    plugin_uuid: Option<&str>,
     skill_categories: &[String],
     skill_ids: &[String],
     explicit: Option<&str>,
@@ -138,88 +140,10 @@ pub fn build_system_prompt(
         });
     }
 
-    // 1. SQLite 索引
-    let rows = db::db_query(
-        "dialogue",
-        "SELECT id, name, category, sort, version
-         FROM skills WHERE is_enabled = 1 ORDER BY category, sort",
-    )
-    .context("读取 skills 索引失败")?;
+    let request = build_skills_request(plugin_uuid, skill_categories, skill_ids);
+    let data = plugin_lib::get_skills(request).context("读取技能失败（plugin_lib.get_skills）")?;
 
-    let id_filter: HashSet<&str> = skill_ids.iter().map(String::as_str).collect();
-    let category_filter: HashSet<&str> = skill_categories.iter().map(String::as_str).collect();
-
-    let mut index_rows: Vec<(String, String, String, i64, i64)> = Vec::new();
-    for row in &rows {
-        let id = as_string(row.get("id"));
-        let category = as_string(row.get("category"));
-        if !id_filter.is_empty() && !id_filter.contains(id.as_str()) {
-            continue;
-        }
-        if id_filter.is_empty()
-            && !category_filter.is_empty()
-            && !category_filter.contains(category.as_str())
-        {
-            continue;
-        }
-        index_rows.push((
-            id,
-            as_string(row.get("name")),
-            category,
-            as_i64(row.get("sort"), 0),
-            as_i64(row.get("version"), 1),
-        ));
-    }
-
-    // 2. designdb 完整内容
-    let content_rows = designdb::query_all("skills", "skills", Some(json!({})), None)
-        .context("读取 skills 完整内容失败")?;
-    let content_by_id: HashMap<String, Value> = content_rows
-        .into_iter()
-        .filter_map(|doc| {
-            let id = doc
-                .get("_id")
-                .or_else(|| doc.get("id"))
-                .and_then(Value::as_str)?
-                .to_string();
-            Some((id, doc))
-        })
-        .collect();
-
-    let mut missing_content_ids = Vec::new();
-    let mut version_mismatch_ids = Vec::new();
-    let mut selected: Vec<SkillRow> = Vec::new();
-
-    for (id, name, category, sort, index_version) in index_rows {
-        let Some(doc) = content_by_id.get(&id) else {
-            missing_content_ids.push(id);
-            continue;
-        };
-        let content = as_string(doc.get("content"));
-        if content.trim().is_empty() {
-            missing_content_ids.push(id);
-            continue;
-        }
-        let content_version = as_i64(doc.get("version"), index_version);
-        if content_version != index_version {
-            version_mismatch_ids.push(id.clone());
-        }
-        let content_name = doc
-            .get("name")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&name)
-            .to_string();
-
-        selected.push(SkillRow {
-            id,
-            name: content_name,
-            category,
-            content,
-            sort,
-        });
-    }
-
+    let mut selected = parse_skills_response(&data, skill_categories, skill_ids);
     selected.sort_by(|a, b| {
         category_rank(&a.category)
             .cmp(&category_rank(&b.category))
@@ -239,8 +163,8 @@ pub fn build_system_prompt(
             skill_ids: Vec::new(),
             categories: Vec::new(),
             truncated,
-            missing_content_ids,
-            version_mismatch_ids,
+            missing_content_ids: Vec::new(),
+            version_mismatch_ids: Vec::new(),
         });
     }
 
@@ -264,9 +188,85 @@ pub fn build_system_prompt(
         skill_ids: selected.iter().map(|s| s.id.clone()).collect(),
         categories,
         truncated,
-        missing_content_ids,
-        version_mismatch_ids,
+        missing_content_ids: Vec::new(),
+        version_mismatch_ids: Vec::new(),
     })
+}
+
+/// 构造 `plugin_lib.get_skills` 请求。
+///
+/// `plugin_uuid` 用于取某个插件随包技能；`ids` / `categories` 用于进一步筛选。
+fn build_skills_request(
+    plugin_uuid: Option<&str>,
+    skill_categories: &[String],
+    skill_ids: &[String],
+) -> Value {
+    let mut request = json!({
+        "enabled": 1,
+        "with_content": true,
+        "page": 1,
+        "page_size": 500,
+    });
+    if let Some(plugin) = plugin_uuid.map(str::trim).filter(|s| !s.is_empty()) {
+        request["plugin_uuid"] = json!(plugin);
+    }
+    if !skill_categories.is_empty() {
+        request["categories"] = json!(skill_categories);
+    }
+    if !skill_ids.is_empty() {
+        request["ids"] = json!(skill_ids);
+    }
+    request
+}
+
+/// 解析 `plugin_lib.get_skills` 的 `data.list`，并按 ids / categories 做二次筛选。
+fn parse_skills_response(
+    data: &Value,
+    skill_categories: &[String],
+    skill_ids: &[String],
+) -> Vec<SkillRow> {
+    let id_filter: HashSet<&str> = skill_ids.iter().map(String::as_str).collect();
+    let category_filter: HashSet<&str> = skill_categories.iter().map(String::as_str).collect();
+
+    let Some(list) = data.get("list").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut rows = Vec::new();
+    for item in list {
+        let id = as_string(item.get("id"));
+        if id.is_empty() {
+            continue;
+        }
+        let category = as_string(item.get("category"));
+        if !id_filter.is_empty() && !id_filter.contains(id.as_str()) {
+            continue;
+        }
+        if id_filter.is_empty()
+            && !category_filter.is_empty()
+            && !category_filter.contains(category.as_str())
+        {
+            continue;
+        }
+        let content = as_string(item.get("content"));
+        if content.trim().is_empty() {
+            continue;
+        }
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&id)
+            .to_string();
+        rows.push(SkillRow {
+            id,
+            name,
+            category,
+            content,
+            sort: as_i64(item.get("sort"), 0),
+        });
+    }
+    rows
 }
 
 #[cfg(test)]
@@ -294,5 +294,57 @@ mod tests {
         assert!(prompt.contains("通用（general）"));
         assert!(prompt.contains("[通用] 技能一：内容一"));
         assert!(prompt.contains("使用规则"));
+    }
+
+    #[test]
+    fn skills_request_carries_plugin_and_filters() {
+        let req = build_skills_request(
+            Some("plugin-1"),
+            &["plugin".to_string()],
+            &["s1".to_string()],
+        );
+        assert_eq!(req["plugin_uuid"], "plugin-1");
+        assert_eq!(req["enabled"], 1);
+        assert_eq!(req["with_content"], true);
+        assert_eq!(req["categories"][0], "plugin");
+        assert_eq!(req["ids"][0], "s1");
+
+        let plain = build_skills_request(None, &[], &[]);
+        assert!(plain.get("plugin_uuid").is_none());
+        assert!(plain.get("ids").is_none());
+        assert!(plain.get("categories").is_none());
+    }
+
+    #[test]
+    fn parse_response_filters_by_ids_and_drops_empty_content() {
+        let data = json!({
+            "list": [
+                {"id": "s1", "name": "技能一", "category": "plugin", "content": "内容一", "sort": 2},
+                {"id": "s2", "name": "技能二", "category": "plugin", "content": "内容二", "sort": 1},
+                {"id": "s3", "name": "空技能", "category": "plugin", "content": " ", "sort": 3}
+            ]
+        });
+
+        let all = parse_skills_response(&data, &[], &[]);
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|row| row.id != "s3"));
+
+        let only = parse_skills_response(&data, &[], &["s2".to_string()]);
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].id, "s2");
+        assert_eq!(only[0].content, "内容二");
+    }
+
+    #[test]
+    fn parse_response_uses_id_when_name_missing() {
+        let data = json!({
+            "list": [
+                {"id": "s1", "category": "plugin", "content": "内容"}
+            ]
+        });
+        let rows = parse_skills_response(&data, &[], &[]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "s1");
+        assert_eq!(rows[0].sort, 0);
     }
 }

@@ -44,6 +44,9 @@ pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_
         skill_ids: req.skill_ids.clone().unwrap_or_default(),
         system_prompt: req.system_prompt.clone(),
         refresh_system_prompt: req.refresh_system_prompt.unwrap_or(false),
+        plugin_uuid: req.plugin_uuid.clone(),
+        dialogue_id: req.dialogue_id.clone(),
+        show_status: req.show_status,
     };
 
     match run_chat(

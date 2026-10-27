@@ -68,6 +68,11 @@ pub fn get_functions(request: Value) -> Result<Value> {
     call("get_functions", request)
 }
 
+/// 读取技能（索引 / 正文）；所有技能信息统一由 designplugin_lib 提供。
+pub fn get_skills(request: Value) -> Result<Value> {
+    call("get_skills", request)
+}
+
 pub fn patch_function(request: Value) -> Result<Value> {
     call("patch_function", request)
 }
