@@ -47,3 +47,6 @@ models
 cyctron
 # Added by
 datasets
+
+# Local cargo source mirror
+.cargo/

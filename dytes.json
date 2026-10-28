@@ -23,6 +23,10 @@
     "qwen3-embed": "1.0.0"
   },
   "exports": {
-    "./target/release/chatllm.dll": "chatllm.dll"
-  }
+    "./target/release/chatllm.dll": "chatllm.dll",
+    "./setup.ts": "setup.ts"
+  },
+  "init": [
+    "./setup.ts"
+  ]
 }
