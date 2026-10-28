@@ -56,6 +56,12 @@ pub struct ChatDetailReq {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct TurboSearchReq {
+    pub query: String,
+    pub top_k: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
