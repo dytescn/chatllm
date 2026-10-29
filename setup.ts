@@ -268,3 +268,11 @@ if (await tableExists("skills")) {
   await dbUpdate("DROP TABLE skills;");
   console.log("skills 表已删除");
 }
+
+// 旧对话结构：messages / messages_fts / sessions 表；消息已改存 designdb/<dialogue_id>。
+for (const table of ["messages_fts", "messages", "sessions"]) {
+  if (await tableExists(table)) {
+    await dbUpdate(`DROP TABLE ${table};`);
+    console.log(`${table} 表已删除`);
+  }
+}
