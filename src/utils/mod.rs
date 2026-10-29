@@ -13,7 +13,6 @@ pub mod plugin_embed;
 pub mod plugin_lib;
 pub mod prompts;
 pub mod search;
-pub mod sessions;
 pub mod siliconflow;
 pub mod skills;
 pub mod threading;

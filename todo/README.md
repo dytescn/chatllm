@@ -11,8 +11,6 @@
   - `chat.rs`：`post_chat`、`post_dialogue_list`、`post_dialogue_update`、`post_dialogue_search`、`post_chat_detail`。
   - `run.rs`：一次完整 chat 的业务流程。
   - `types.rs`：请求体的结构定义。
-  - `sessions.rs`：`post_session_*` 入口（当前未挂载，属于死代码）。
-  - `skills.rs`：空文件。
 - `src/utils/`：内部工具模块。
   - `cjson.rs`：把结果写入 C 缓冲区。
   - `db.rs`：动态加载宿主的 `database.so` 并执行 SQL。

@@ -3,8 +3,6 @@
 ## 1. 模块整理与清理
 
 - [ ] 处理 `src/utils` 下未启用的旧推理代码：`config.rs`、`generate.rs`、`loader.rs`、`prompt.rs`、`token.rs`、`ranking.rs`。其中 `generate.rs` / `loader.rs` / `token.rs` 依赖 `encoding_rs` 和 `llama_cpp_2`，而这两者目前只在 `dev-dependencies` 中，直接启用会编译失败。需要决定是删除还是迁移到独立模块。
-- [ ] 处理 `src/ffi/sessions.rs`：它没有在 `src/ffi/mod.rs` 中声明，属于死代码；同时它允许传入任意 SQL 并执行，一旦启用会有任意 SQL 执行风险，接入前必须加白名单或改为固定方法。
-- [ ] 处理 `src/ffi/skills.rs`：目前是空文件，确认其用途后补实现或删除。
 - [ ] 清理 `ts/` 下重复或废弃脚本：`init_design_plugins.ts` 中 `prompts` 建表 SQL 混入了错误的 `CREATE INDEX` 和多余的 `);`，且与 `reinit_prompts.ts` 功能重复。
 
 ## 2. 功能缺陷

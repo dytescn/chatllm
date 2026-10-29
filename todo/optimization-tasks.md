@@ -48,7 +48,7 @@ CL-05 ─────────────> CL-07（避免发布后再迁移�
 | CL-01 | 补数据库写封装 `db_insert` / `db_update` / `db_delete` | P0 | 无 | `src/utils/db.rs` | 临时库 CRUD 通过；错误码透传 |
 | CL-02 | 拆分 `ChatConfig` / `EmbedConfig`，启用 `loader` | P0 | 无 | `src/utils/config.rs`、`mod.rs`、`loader.rs` | `cargo check`；embedding 模型加载（ignored 测试） |
 | CL-03 | `crate-type` 加 `rlib` | P0 | 无 | `Cargo.toml` | `cargo test` 可编译；`cargo build --release` 仍产 DLL |
-| CL-04 | `sessions.rs` 去掉任意 SQL，改结构化接口 | P1 | CL-01 | `src/ffi/sessions.rs`、调用方 | 非法 SQL 被拒；正常 CRUD 不回归 |
+| CL-04 | `sessions.rs` 去掉任意 SQL，改结构化接口 | P1 | CL-01 | 已随 session 表与 `sessions_*` 移除（1.0.5） | 完成 |
 | CL-05 | 统一 `dialogue.db` 与 `database/<uuid>.db` | P1 | 无（需产品确认） | `src/utils/dialogue.rs`、`setup.ts` | 新会话不再新增 uuid.db；历史数据可读 |
 | CL-06 | 错误码表与常量统一 | P1 | 无 | `src/ffi/*.rs`、新增 `src/utils/error.rs` | 文档与代码一致；无散落字面量 |
 | CL-07 | 版本、`dytes.json`、`setup.ts`、发布验证 | P2 | F-09、CL-05、CL-06 | `Cargo.toml`、`dytes.json`、`setup.ts` | 发布并安装成功；新符号可调用 |

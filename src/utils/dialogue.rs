@@ -82,6 +82,11 @@ fn ensure_dialogue_schema() -> Result<()> {
                 model_name TEXT NOT NULL DEFAULT '',
                 system_prompt TEXT,
                 model_config TEXT,
+                parent_id TEXT,
+                skills_json TEXT NOT NULL DEFAULT '[]',
+                context_json TEXT,
+                token_count INTEGER NOT NULL DEFAULT 0,
+                status INTEGER NOT NULL DEFAULT 0,
                 is_pinned INTEGER NOT NULL DEFAULT 0,
                 is_archived INTEGER NOT NULL DEFAULT 0,
                 session_id TEXT NOT NULL DEFAULT '',
@@ -105,6 +110,11 @@ fn ensure_dialogue_schema() -> Result<()> {
             ("show_status", "INTEGER NOT NULL DEFAULT 1"),
             ("message_count", "INTEGER NOT NULL DEFAULT 0"),
             ("last_seq", "INTEGER NOT NULL DEFAULT 0"),
+            ("parent_id", "TEXT"),
+            ("skills_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("context_json", "TEXT"),
+            ("token_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("status", "INTEGER NOT NULL DEFAULT 0"),
         ] {
             if !columns.contains(name) {
                 db_update(

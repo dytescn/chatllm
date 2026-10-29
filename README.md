@@ -43,6 +43,5 @@ LIBCLANG_PATH="C:\Program Files\LLVM\bin" cargo build --release
 
 处理清单见 `dytes_sys_operations/sysinfo/sys/chatllm/db_todo.md` §0.1：
 
-- `sessions_*` / `skills_*` 仍导出；`setup.ts` 建的是 `session` 表，`utils/sessions.rs` 查询 `sessions` 表，表名不一致；
-- 旧 SQLite 对话尚未迁移（G-40）；
+- 旧 SQLite 对话与 `designdb/chatllm` 需运行 `ts/migrate_dialogues.ts` 迁移（G-40 / G-44）；
 - `Cargo.lock` 未入库，构建不完全可复现。
