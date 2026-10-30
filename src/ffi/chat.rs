@@ -5,8 +5,7 @@ use crate::ffi::types::{
 };
 use crate::utils::cjson::{write_error, write_success};
 use crate::utils::dialogue::{
-    is_valid_uuid, list_dialogue, list_messages, search_dialogue, update_dialogue,
-    DialoguePatch,
+    is_valid_uuid, list_dialogue, list_messages, search_dialogue, update_dialogue, DialoguePatch,
 };
 use serde_json::json;
 use std::ffi::{c_char, c_int, CStr};
@@ -39,11 +38,7 @@ pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_
     };
 
     let options = ChatOptions {
-        use_skills: req.use_skills.unwrap_or(false),
-        skill_categories: req.skill_categories.clone().unwrap_or_default(),
-        skill_ids: req.skill_ids.clone().unwrap_or_default(),
         system_prompt: req.system_prompt.clone(),
-        refresh_system_prompt: req.refresh_system_prompt.unwrap_or(false),
         plugin_uuid: req.plugin_uuid.clone(),
         dialogue_id: req.dialogue_id.clone(),
         show_status: req.show_status,
@@ -69,8 +64,6 @@ pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_
                 "keyword": req.keyword,
                 "session_id": out.session_id,
                 "system_prompt": out.system_prompt,
-                "skills": out.skills,
-                "truncated": out.truncated,
             }),
         ),
         Err(e) => write_error(json_out, e.code(), &e.message()),
@@ -90,7 +83,10 @@ pub extern "C" fn post_dialogue_list(json_in: *const c_char, json_out: *mut c_ch
     };
 
     let req: DialogueListReq = if body.trim().is_empty() {
-        DialogueListReq { page: None, page_size: None }
+        DialogueListReq {
+            page: None,
+            page_size: None,
+        }
     } else {
         match serde_json::from_str(body) {
             Ok(v) => v,
@@ -132,7 +128,11 @@ pub extern "C" fn post_dialogue_update(json_in: *const c_char, json_out: *mut c_
     };
     match update_dialogue(&req.id, &patch) {
         Ok(_) => write_success(json_out, "success", json!({ "id": req.id })),
-        Err(e) => write_error(json_out, 400303, &format!("update dialogue failed: {:#}", e)),
+        Err(e) => write_error(
+            json_out,
+            400303,
+            &format!("update dialogue failed: {:#}", e),
+        ),
     }
 }
 
@@ -149,7 +149,11 @@ pub extern "C" fn post_dialogue_search(json_in: *const c_char, json_out: *mut c_
     };
 
     let req: DialogueSearchReq = if body.trim().is_empty() {
-        DialogueSearchReq { keyword: None, page: None, page_size: None }
+        DialogueSearchReq {
+            keyword: None,
+            page: None,
+            page_size: None,
+        }
     } else {
         match serde_json::from_str(body) {
             Ok(v) => v,
@@ -157,9 +161,17 @@ pub extern "C" fn post_dialogue_search(json_in: *const c_char, json_out: *mut c_
         }
     };
 
-    match search_dialogue(req.keyword.as_deref().unwrap_or(""), req.page, req.page_size) {
+    match search_dialogue(
+        req.keyword.as_deref().unwrap_or(""),
+        req.page,
+        req.page_size,
+    ) {
         Ok(data) => write_success(json_out, "success", data),
-        Err(e) => write_error(json_out, 400304, &format!("search dialogue failed: {:#}", e)),
+        Err(e) => write_error(
+            json_out,
+            400304,
+            &format!("search dialogue failed: {:#}", e),
+        ),
     }
 }
 

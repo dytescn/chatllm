@@ -188,18 +188,21 @@ fn compile_bench() -> Result<()> {
     // ===== 阶段 1：全量 debug 编译（lib + bins + tests 元数据） =====
     println!("\n========== 阶段 1：全量编译（debug, 含测试） ==========");
     let start = Instant::now();
-    let (t, ok, stderr) = timed_cmd(
-        "cargo",
-        &["build", "--tests", "--all-targets"],
-        &root,
-    )?;
+    let (_t, ok, stderr) = timed_cmd("cargo", &["build", "--tests", "--all-targets"], &root)?;
     let wall = start.elapsed();
-    println!("cargo build --tests --all-targets 墙钟耗时: {:?} (成功={})", wall, ok);
+    println!(
+        "cargo build --tests --all-targets 墙钟耗时: {:?} (成功={})",
+        wall, ok
+    );
     if let Some(parsed) = parse_cargo_time(&stderr) {
         println!("cargo 自报耗时: {:?}", parsed);
     }
     let target_after_debug = target_size(&root);
-    println!("target 大小: {} bytes ({:.2} MiB)", target_after_debug, target_after_debug as f64 / 1024.0 / 1024.0);
+    println!(
+        "target 大小: {} bytes ({:.2} MiB)",
+        target_after_debug,
+        target_after_debug as f64 / 1024.0 / 1024.0
+    );
 
     // ===== 阶段 2：增量编译（无改动，测空跑开销） =====
     println!("\n========== 阶段 2：增量空跑（无改动） ==========");
@@ -228,14 +231,18 @@ fn compile_bench() -> Result<()> {
     // ===== 阶段 4：release 编译（仅 lib + bin，不含测试） =====
     println!("\n========== 阶段 4：release 编译 ==========");
     let start = Instant::now();
-    let (t, ok, stderr) = timed_cmd("cargo", &["build", "--release"], &root)?;
+    let (_t, ok, stderr) = timed_cmd("cargo", &["build", "--release"], &root)?;
     let wall = start.elapsed();
     println!("cargo build --release 墙钟耗时: {:?} (成功={})", wall, ok);
     if let Some(parsed) = parse_cargo_time(&stderr) {
         println!("cargo 自报耗时: {:?}", parsed);
     }
     let target_after_release = target_size(&root);
-    println!("release 后 target 总大小: {} bytes ({:.2} MiB)", target_after_release, target_after_release as f64 / 1024.0 / 1024.0);
+    println!(
+        "release 后 target 总大小: {} bytes ({:.2} MiB)",
+        target_after_release,
+        target_after_release as f64 / 1024.0 / 1024.0
+    );
 
     // ===== 阶段 5：测试可执行文件编译（cargo test --no-run） =====
     println!("\n========== 阶段 5：cargo test --no-run ==========");
@@ -259,7 +266,12 @@ fn compile_bench() -> Result<()> {
         let p = root.join("target").join(sub);
         if p.exists() {
             let (c, b) = dir_stats(&p);
-            println!("target/{}: {} 文件, {:.2} MiB", sub, c, b as f64 / 1024.0 / 1024.0);
+            println!(
+                "target/{}: {} 文件, {:.2} MiB",
+                sub,
+                c,
+                b as f64 / 1024.0 / 1024.0
+            );
         }
     }
 
@@ -267,8 +279,14 @@ fn compile_bench() -> Result<()> {
     println!("\n========== 汇总 ==========");
     println!("逻辑核心数        : {}", cpu);
     println!("源码文件/行数     : {} / {}", src_files, src_lines);
-    println!("debug target 大小 : {:.2} MiB", target_after_debug as f64 / 1024.0 / 1024.0);
-    println!("release target 大小: {:.2} MiB", target_after_release as f64 / 1024.0 / 1024.0);
+    println!(
+        "debug target 大小 : {:.2} MiB",
+        target_after_debug as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "release target 大小: {:.2} MiB",
+        target_after_release as f64 / 1024.0 / 1024.0
+    );
     println!("测试完成 ✅");
 
     Ok(())

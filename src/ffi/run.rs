@@ -1,22 +1,14 @@
-// src/ffi/run.rs
 use serde_json::Value;
 
 use crate::utils::dialogue::{
-    append_message, create_dialogue_with, get_dialogue, is_valid_uuid, message_history,
-    update_dialogue, update_keyword, update_session_id, DialoguePatch,
+    append_message, create_dialogue_with, get_dialogue, is_valid_uuid, update_dialogue,
+    update_keyword, DialoguePatch,
 };
-use crate::utils::markparse::to_html;
-use crate::utils::siliconflow::{chat_messages, ChatMessage};
-use crate::utils::skills;
 
 #[derive(Debug, Clone, Default)]
 pub struct ChatOptions {
-    pub use_skills: bool,
-    pub skill_categories: Vec<String>,
-    pub skill_ids: Vec<String>,
     pub system_prompt: Option<String>,
-    pub refresh_system_prompt: bool,
-    /// 插件 UUID：新建时作为 `dialogue.id`，并默认注入该插件 skills
+    /// 插件 UUID：新建时作为 `dialogue.id`
     pub plugin_uuid: Option<String>,
     /// 新建对话时指定 `dialogue.id`（普通指定 id 场景）
     pub dialogue_id: Option<String>,
@@ -68,27 +60,20 @@ pub(crate) fn resolve_chat_target(
 pub struct ChatOutcome {
     pub uuid: String,
     pub created: bool,
+    /// 模型生成已移除；保留字段以兼容旧响应，固定为空字符串。
     pub content: String,
-    /// assistant 回复的 Markdown → HTML（转译失败时为空字符串，不阻断对话）
+    /// 模型生成已移除；保留字段以兼容旧响应，固定为空字符串。
     pub content_html: String,
-    /// 模型响应 id（写入 dialogue.session_id）
     pub session_id: Option<String>,
     pub system_prompt: Option<String>,
-    pub skills: Vec<String>,
-    pub truncated: bool,
 }
 
 pub enum ChatFlowError {
     InvalidUuid(String),
     CreateDialogue(String),
     LoadDialogue(String),
-    LoadHistory(String),
-    Skills(String),
     AppendUser(String),
     UpdateKeyword(String),
-    SiliconFlow(String),
-    UpdateSession(String),
-    AppendAssistant(String),
 }
 
 impl ChatFlowError {
@@ -97,13 +82,8 @@ impl ChatFlowError {
             ChatFlowError::InvalidUuid(_) => 400103,
             ChatFlowError::CreateDialogue(_) => 400300,
             ChatFlowError::LoadDialogue(_) => 400303,
-            ChatFlowError::LoadHistory(_) => 400301,
-            ChatFlowError::Skills(_) => 400109,
             ChatFlowError::AppendUser(_) => 400301,
             ChatFlowError::UpdateKeyword(_) => 400305,
-            ChatFlowError::SiliconFlow(_) => 400400,
-            ChatFlowError::UpdateSession(_) => 400303,
-            ChatFlowError::AppendAssistant(_) => 400401,
         }
     }
 
@@ -112,13 +92,8 @@ impl ChatFlowError {
             ChatFlowError::InvalidUuid(e) => format!("invalid uuid: {}", e),
             ChatFlowError::CreateDialogue(e) => format!("create dialogue failed: {}", e),
             ChatFlowError::LoadDialogue(e) => format!("load dialogue failed: {}", e),
-            ChatFlowError::LoadHistory(e) => format!("load messages failed: {}", e),
-            ChatFlowError::Skills(e) => format!("build system prompt failed: {}", e),
             ChatFlowError::AppendUser(e) => format!("append user message failed: {}", e),
             ChatFlowError::UpdateKeyword(e) => format!("update keyword failed: {}", e),
-            ChatFlowError::SiliconFlow(e) => format!("siliconflow chat failed: {}", e),
-            ChatFlowError::UpdateSession(e) => format!("update session_id failed: {}", e),
-            ChatFlowError::AppendAssistant(e) => format!("append assistant message failed: {}", e),
         }
     }
 }
@@ -128,24 +103,6 @@ fn non_empty(value: Option<&Value>) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-}
-
-fn should_use_skills(options: &ChatOptions, plugin_uuid: Option<&str>) -> bool {
-    options.use_skills || (plugin_uuid.is_some() && options.system_prompt.is_none())
-}
-
-fn build_prompt(
-    options: &ChatOptions,
-    plugin_uuid: Option<&str>,
-) -> Result<skills::SkillBuild, ChatFlowError> {
-    skills::build_system_prompt(
-        should_use_skills(options, plugin_uuid),
-        plugin_uuid,
-        &options.skill_categories,
-        &options.skill_ids,
-        options.system_prompt.as_deref(),
-    )
-    .map_err(|e| ChatFlowError::Skills(e.to_string()))
 }
 
 fn new_title(name: Option<&str>, prompt: &str, plugin_uuid: Option<&str>) -> String {
@@ -171,31 +128,28 @@ fn create_new_chat(
     keyword: Option<&str>,
     options: &ChatOptions,
     plugin_uuid: Option<&str>,
-) -> Result<(String, bool, Option<Value>, Option<skills::SkillBuild>), ChatFlowError> {
-    let build = build_prompt(options, plugin_uuid)?;
+) -> Result<String, ChatFlowError> {
     let title = new_title(name, prompt, plugin_uuid);
     let kw = keyword.unwrap_or("");
-    let new_id = create_dialogue_with(
+    create_dialogue_with(
         id,
         &title,
         "",
         kw,
-        Some(build.system_prompt.as_str()),
+        options.system_prompt.as_deref(),
         show_status,
     )
-    .map_err(|e| ChatFlowError::CreateDialogue(e.to_string()))?;
-    Ok((new_id, true, None, Some(build)))
+    .map_err(|e| ChatFlowError::CreateDialogue(e.to_string()))
 }
 
-/// 一次完整 chat 流程：
+/// 一次 chat 只负责对话与消息持久化：
 /// 1) 校验 uuid
 /// 2) 新建 / 续聊
-/// 3) 组装 system prompt（skills）
+/// 3) 可选写入显式 system_prompt
 /// 4) 写 user 消息
-/// 5) 读历史 messages + session_id
-/// 6) 调模型，取 content 与响应 id
-/// 7) 响应 id 写入 dialogue.session_id
-/// 8) 写 assistant 消息
+/// 5) 读取 dialogue 的 system_prompt / session_id 返回
+///
+/// 不再调用 siliconflow，也不注入 skills；assistant 消息由宿主 / 其他服务写入。
 pub fn run_chat(
     prompt: &str,
     uuid: Option<&str>,
@@ -214,7 +168,6 @@ pub fn run_chat(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let use_skills = should_use_skills(options, plugin_uuid);
     let target = resolve_chat_target(
         uuid,
         plugin_uuid,
@@ -222,16 +175,13 @@ pub fn run_chat(
         options.show_status,
     );
 
-    let mut used_skills: Vec<String> = Vec::new();
-    let mut truncated = false;
-
-    let (uuid, created, existing_row, created_build) = match target {
+    let (uuid, created) = match target {
         ChatTarget::Existing(id) => {
             if !is_valid_uuid(&id) {
                 return Err(ChatFlowError::InvalidUuid(id));
             }
             match get_dialogue(&id) {
-                Ok(Some(row)) => (id, false, Some(row), None),
+                Ok(Some(_)) => (id, false),
                 Ok(None) => {
                     return Err(ChatFlowError::LoadDialogue(format!("对话不存在: {}", id)));
                 }
@@ -245,8 +195,24 @@ pub fn run_chat(
                     return Err(ChatFlowError::InvalidUuid(existing_id.to_string()));
                 }
                 match get_dialogue(existing_id) {
-                    Ok(Some(row)) => (existing_id.to_string(), false, Some(row), None),
-                    Ok(None) => create_new_chat(
+                    Ok(Some(_)) => (existing_id.to_string(), false),
+                    Ok(None) => (
+                        create_new_chat(
+                            id.as_deref(),
+                            show_status,
+                            name,
+                            prompt,
+                            keyword,
+                            options,
+                            plugin_uuid,
+                        )?,
+                        true,
+                    ),
+                    Err(e) => return Err(ChatFlowError::LoadDialogue(e.to_string())),
+                }
+            } else {
+                (
+                    create_new_chat(
                         id.as_deref(),
                         show_status,
                         name,
@@ -255,39 +221,24 @@ pub fn run_chat(
                         options,
                         plugin_uuid,
                     )?,
-                    Err(e) => return Err(ChatFlowError::LoadDialogue(e.to_string())),
-                }
-            } else {
-                create_new_chat(
-                    id.as_deref(),
-                    show_status,
-                    name,
-                    prompt,
-                    keyword,
-                    options,
-                    plugin_uuid,
-                )?
+                    true,
+                )
             }
         }
     };
 
-    let final_system_prompt = if let Some(build) = created_build {
-        used_skills = build.skill_ids;
-        truncated = build.truncated;
-        Some(build.system_prompt)
-    } else if let Some(existing) = existing_row {
-        let current_system = non_empty(existing.get("system_prompt"));
-        let should_build = options.refresh_system_prompt
-            || options.system_prompt.is_some()
-            || (current_system.is_none() && use_skills);
-
-        if should_build {
-            let build = build_prompt(options, plugin_uuid)?;
+    if !created {
+        if let Some(kw) = keyword {
+            if let Err(e) = update_keyword(&uuid, kw) {
+                return Err(ChatFlowError::UpdateKeyword(e.to_string()));
+            }
+        }
+        if let Some(system_prompt) = options.system_prompt.as_deref() {
             let patch = DialoguePatch {
                 title: None,
                 keyword: None,
                 model_name: None,
-                system_prompt: Some(build.system_prompt.as_str()),
+                system_prompt: Some(system_prompt),
                 model_config: None,
                 is_pinned: None,
                 is_archived: None,
@@ -296,21 +247,6 @@ pub fn run_chat(
             };
             update_dialogue(&uuid, &patch)
                 .map_err(|e| ChatFlowError::LoadDialogue(e.to_string()))?;
-            used_skills = build.skill_ids;
-            truncated = build.truncated;
-            Some(build.system_prompt)
-        } else {
-            current_system
-        }
-    } else {
-        None
-    };
-
-    if !created {
-        if let Some(kw) = keyword {
-            if let Err(e) = update_keyword(&uuid, kw) {
-                return Err(ChatFlowError::UpdateKeyword(e.to_string()));
-            }
         }
     }
 
@@ -325,64 +261,16 @@ pub fn run_chat(
         }
         Err(e) => return Err(ChatFlowError::LoadDialogue(e.to_string())),
     };
-    let system_prompt = final_system_prompt.or_else(|| non_empty(dialogue.get("system_prompt")));
+    let system_prompt = non_empty(dialogue.get("system_prompt"));
     let session_id = non_empty(dialogue.get("session_id"));
-
-    let history = match message_history(&uuid) {
-        Ok(rows) => rows,
-        Err(e) => return Err(ChatFlowError::LoadHistory(e.to_string())),
-    };
-
-    let mut messages: Vec<ChatMessage> = Vec::with_capacity(history.len() + 1);
-    if let Some(system_prompt) = &system_prompt {
-        messages.push(ChatMessage::system(system_prompt));
-    }
-    for row in &history {
-        let role = row.get("role").and_then(Value::as_str).unwrap_or("user");
-        let content = row.get("content").and_then(Value::as_str).unwrap_or("");
-        if content.is_empty() {
-            continue;
-        }
-        match role {
-            "assistant" => messages.push(ChatMessage::assistant(content)),
-            "system" => messages.push(ChatMessage::system(content)),
-            _ => messages.push(ChatMessage::user(content)),
-        }
-    }
-
-    let result = match chat_messages(messages, session_id.as_deref()) {
-        Ok(result) => result,
-        Err(e) => return Err(ChatFlowError::SiliconFlow(e.to_string())),
-    };
-
-    if let Some(id) = result.id.as_deref() {
-        if let Err(e) = update_session_id(&uuid, id) {
-            return Err(ChatFlowError::UpdateSession(e.to_string()));
-        }
-    }
-
-    // Markdown 转译只影响返回给前端的 HTML，原文仍写入消息表；失败不阻断对话。
-    let content_html = match to_html(&result.content) {
-        Ok(html) => html,
-        Err(e) => {
-            eprintln!("[chatllm] markdown 转译失败，降级为原文: {:#}", e);
-            String::new()
-        }
-    };
-
-    if let Err(e) = append_message(&uuid, "assistant", &result.content) {
-        return Err(ChatFlowError::AppendAssistant(e.to_string()));
-    }
 
     Ok(ChatOutcome {
         uuid,
         created,
-        content: result.content,
-        content_html,
-        session_id: result.id,
+        content: String::new(),
+        content_html: String::new(),
+        session_id,
         system_prompt,
-        skills: used_skills,
-        truncated,
     })
 }
 

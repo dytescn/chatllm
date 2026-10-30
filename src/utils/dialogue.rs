@@ -83,7 +83,6 @@ fn ensure_dialogue_schema() -> Result<()> {
                 system_prompt TEXT,
                 model_config TEXT,
                 parent_id TEXT,
-                skills_json TEXT NOT NULL DEFAULT '[]',
                 context_json TEXT,
                 token_count INTEGER NOT NULL DEFAULT 0,
                 status INTEGER NOT NULL DEFAULT 0,
@@ -111,7 +110,6 @@ fn ensure_dialogue_schema() -> Result<()> {
             ("message_count", "INTEGER NOT NULL DEFAULT 0"),
             ("last_seq", "INTEGER NOT NULL DEFAULT 0"),
             ("parent_id", "TEXT"),
-            ("skills_json", "TEXT NOT NULL DEFAULT '[]'"),
             ("context_json", "TEXT"),
             ("token_count", "INTEGER NOT NULL DEFAULT 0"),
             ("status", "INTEGER NOT NULL DEFAULT 0"),
@@ -163,6 +161,7 @@ fn normalize_dialogue_row(mut row: Value) -> Value {
         if !obj.contains_key("last_seq") {
             obj.insert("last_seq".to_string(), json!(0));
         }
+        obj.remove("skills_json");
     }
     row
 }

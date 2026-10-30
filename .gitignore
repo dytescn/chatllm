@@ -48,5 +48,9 @@ cyctron
 # Added by
 datasets
 
+# Local test environment and datasets（不入库）
+/testenv/
+/datasets/
+
 # Local cargo source mirror
 .cargo/

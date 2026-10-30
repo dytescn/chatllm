@@ -1,11 +1,30 @@
 # chatllm 优化任务清单
 
+> **2026-10-30**：siliconflow 模型调用与 skills 注入已移除；
+> 本文涉及模型生成、skills、向量、嵌入、turbovec 的条目仅作历史记录。
+
 | 项 | 内容 |
 | --- | --- |
-| 状态 | 历史清单（部分已完成）；当前开发待办见 [TODO.md](TODO.md) |
+| 状态 | 历史清单；已完成项见下方「现状核对（1.0.6）」，未完成项已并入 [TODO.md](TODO.md) |
 | 来源 | 2026-10-24 `plugin_embeddings` 设计评审中识别的结构问题 |
-| 关联 | [plugin-embeddings.md](plugin-embeddings.md)（F-09 向量与检索需求） |
+| 关联 | 旧插件向量设计已移除（原 `plugin-embeddings.md` 已删除） |
 | 目标 | 先补齐 F-09 的前置能力，再处理既有结构问题，最后统一发布 |
+
+> 本文保留 2026-10-24 的原始设计与验收标准，作为历史记录；
+> 描述中的文件名、表名与接口若与当前代码不一致，以 [TODO.md](TODO.md) 和代码为准。
+
+### 现状核对（1.0.6）
+
+| ID | 状态 | 说明 |
+| --- | --- | --- |
+| CL-01 | 完成 | `db.rs` 提供 `db_query` / `db_execute` / `db_update`，写操作分别映射 `post_db_insert` / `post_db_update`，未单独暴露 delete。 |
+| CL-02 | 部分替代 | 未拆分 `ChatConfig` / `EmbedConfig`；向量化由 `embedding.rs` 独立实现，`config` / `loader` 仍未被业务引用。 |
+| CL-03 | 完成 | `Cargo.toml` 的 `crate-type = ["cdylib", "rlib"]`。 |
+| CL-04 | 完成 | `session` 表与 `sessions_*` 已在 1.0.5 移除。 |
+| CL-05 | 部分完成 | 消息改为 `designdb/<dialogue_id>`，索引仍在 `dialogue.db`；跨库计数对账仍待，见 `TODO.md` P0。 |
+| CL-06 | 未完成 | 错误码仍散落在各 FFI 文件。 |
+| CL-07 | 完成 | 版本已到 1.0.6，`Cargo.toml` 与 `dytes.json` 一致。 |
+| F-09 | 已移除 | 插件向量与素材向量能力已移除（`post_plugin_*` / `post_material_*` 不再导出），本条仅作历史记录。 |
 
 ---
 
@@ -19,7 +38,7 @@
 
 第二批（F-09 前置）
   CL-02  拆分 ChatConfig / EmbedConfig，启用 loader
-  F-09   实现 plugin_embeddings + post_plugin_embed / post_plugin_search
+  F-09   插件 / 素材向量（已移除）
 
 第三批（结构收口）
   CL-04  sessions 去掉任意 SQL
@@ -33,7 +52,7 @@
 
 ```text
 CL-03 ─┬─> CL-01 ─┬─> CL-04
-       │          └─> F-09（写 plugin_embeddings）
+       │          └─> F-09（已移除）
        └─> CL-02 ────> F-09（生成向量）
 CL-06 ─────────────> CL-07（错误码稳定后再发布）
 CL-05 ─────────────> CL-07（避免发布后再迁移数据）
@@ -52,7 +71,7 @@ CL-05 ─────────────> CL-07（避免发布后再迁移�
 | CL-05 | 统一 `dialogue.db` 与 `database/<uuid>.db` | P1 | 无（需产品确认） | `src/utils/dialogue.rs`、`setup.ts` | 新会话不再新增 uuid.db；历史数据可读 |
 | CL-06 | 错误码表与常量统一 | P1 | 无 | `src/ffi/*.rs`、新增 `src/utils/error.rs` | 文档与代码一致；无散落字面量 |
 | CL-07 | 版本、`dytes.json`、`setup.ts`、发布验证 | P2 | F-09、CL-05、CL-06 | `Cargo.toml`、`dytes.json`、`setup.ts` | 发布并安装成功；新符号可调用 |
-| F-09 | `plugin_embeddings` + embed/search 接口 | P0 | CL-01、CL-02、CL-03 | 见 `plugin-embeddings.md` | 向量化、检索、状态回写通过 |
+| F-09 | 已移除 | — | CL-01、CL-02、CL-03 | — | 插件 / 素材向量能力已删除 |
 
 > 状态列统一使用：`待执行` / `进行中` / `完成` / `阻塞`。开工时在任务详情里补日期与提交号。
 
@@ -65,7 +84,7 @@ CL-05 ─────────────> CL-07（避免发布后再迁移�
 **背景**
 
 `src/utils/db.rs` 目前只封装了 `post_db_query`，写操作没有统一入口。`setup.ts` 走 HTTP 的 `db_update`，
-而 Rust 侧要写 `dialogue.plugin_embeddings`、回写 `plugin_functions` 时必须自己重复 libloading 逻辑。
+而 Rust 侧要写向量表、回写 `plugin_functions` 时必须自己重复 libloading 逻辑。
 
 **改动**
 
@@ -250,7 +269,7 @@ cargo build --release
 
 1. 新增 `src/utils/error.rs`：常量 + `msg(code)`；
 2. 各 FFI 改用常量，移除散落字面量；
-3. 在 `plugin-embeddings.md` 的错误码表与实现保持一致。
+3. 错误码表与实现保持一致。
 
 **验收**
 
@@ -263,13 +282,13 @@ cargo build --release
 
 **背景**
 
-`Cargo.toml` 与 `dytes.json` 均为 `1.0.1`；新增 `post_plugin_embed` / `post_plugin_search`
+`Cargo.toml` 与 `dytes.json` 均为 `1.0.1`；新增插件向量接口（后已移除）
 后需要升版并验证安装链路。
 
 **改动**
 
 1. `Cargo.toml` / `dytes.json` 升到 `1.0.2`（两处一致）；
-2. `setup.ts` 增加 `plugin_embeddings` 建表与索引（DDL 见 `plugin-embeddings.md` §2.1）；
+2. `setup.ts` 增加向量建表与索引（原 DDL 见已删除的 `plugin-embeddings.md` §2.1）；
 3. 确认 `dytes.json` 的 `exports` 指向 `./target/release/chatllm.dll`；
 4. 发布并在 `app/piksel` 安装验证。
 
@@ -280,23 +299,22 @@ cargo build --release
 ./publish.exe
 cd /d/codes/app/piksel && ./update.exe --auto
 curl -X POST http://127.0.0.1:44944/chatllm \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: plugin_search" \
+  -H "Content-Type: application/libary" -H "FFI-Symbol: turbo_search_query" \
   -d '{"query":"导出文档"}'
 ```
 
 - `dytes.lock` 中 chatllm 为 1.0.2；
-- `dialogue.db` 存在 `plugin_embeddings`；
-- `post_plugin_embed` / `post_plugin_search` 可调用。
+- 历史验收项 `plugin_embeddings` 表与 `post_plugin_embed` / `post_plugin_search` 已随能力移除。
 
 ---
 
 ## 3. 与 F-09 的关系
 
-F-09（`plugin-embeddings.md`）是功能实现，本清单是它的前置与配套治理：
+F-09（原 `plugin-embeddings.md`，已删除）是功能实现，本清单是它的前置与配套治理：
 
 | F-09 依赖 | 对应任务 |
 | --- | --- |
-| 写 `dialogue.plugin_embeddings` | CL-01 |
+| 写向量表（历史） | CL-01 |
 | 生成 1024 维向量 | CL-02 |
 | 纯函数单测（normalize/cosine/blob） | CL-03 |
 | 错误码 `4005xx` | CL-06 |
@@ -310,8 +328,6 @@ F-09（`plugin-embeddings.md`）是功能实现，本清单是它的前置与配
 ## 4. 完成标准
 
 - [ ] 所有 P0 任务完成，`cargo test` / `cargo check` 通过；
-- [ ] F-09 的 `post_plugin_embed` / `post_plugin_search` 可被 cyctron 调用；
-- [ ] `plugin_embeddings` 有向量行，`plugin_functions.embed_status` 正确回写；
 - [ ] `sessions` 不再接受任意 SQL；
 - [ ] 不再新增 `<uuid>.db`（或已明确保留并文档化）；
 - [ ] 错误码文档与实现一致；

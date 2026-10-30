@@ -8,17 +8,13 @@ pub struct ChatReq {
     pub uuid: Option<String>,
     /// 新建对话时直接指定 `dialogue.id`（如插件对话传 `plugin_uuid`）
     pub dialogue_id: Option<String>,
-    /// 插件 UUID：等价于指定 `dialogue.id`，并默认注入该插件的 skills
+    /// 插件 UUID：等价于指定 `dialogue.id`
     pub plugin_uuid: Option<String>,
     /// 新建对话的显示状态：1 正常，2 不显示（插件对话默认 2）
     pub show_status: Option<i64>,
     pub name: Option<String>,
     pub keyword: Option<String>,
-    pub use_skills: Option<bool>,
-    pub skill_categories: Option<Vec<String>>,
-    pub skill_ids: Option<Vec<String>>,
     pub system_prompt: Option<String>,
-    pub refresh_system_prompt: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -54,12 +50,6 @@ pub struct ChatDetailReq {
     pub before_id: Option<i64>,
     pub after_id: Option<i64>,
     pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct TurboSearchReq {
-    pub query: String,
-    pub top_k: Option<usize>,
 }
 
 #[cfg(test)]

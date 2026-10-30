@@ -1,5 +1,6 @@
 {
   "name": "chatllm",
+  "uuid": "69b786e9-19d9-4fe0-b868-048726e1e5b8",
   "version": "1.0.6",
   "description": "system for ai chat",
   "keywords": [
@@ -16,11 +17,7 @@
     "markparse": "1.0.0"
   },
   "dependencies-web": {
-    "setting": "1.0.0",
     "chat_ui": "1.0.6"
-  },
-  "dependencies-model": {
-    "qwen3-embed": "1.0.0"
   },
   "exports": {
     "./target/release/chatllm.dll": "chatllm.dll",

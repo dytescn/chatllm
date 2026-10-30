@@ -1,9 +1,17 @@
 # chatllm 待办
 
+> **2026-10-30**：siliconflow 模型调用与 skills 注入已移除；`chat` 仅写入 user 消息，
+> 相关待办不再适用。向量 / 提示词检索能力也已移除。
+
 > 本文件是 chatllm 仓库内的**唯一开发待办入口**。
-> 架构、接口与数据库说明在 `dytes_sys_operations/sysinfo/sys/chatllm/`；开发完成后回填总库。
+> 架构、接口与数据库说明见 `README.md` / `todo/README.md`；
+> 运行流程分析与实施路线见 `../docs/analyze.md`；本文件只记录可执行待办。
+> 注意：本文件的 `P0–P4` 是优先级，不等同 `docs/analyze.md` 的优化批次编号。
+> 开发完成后回填 `dytes_sys_operations/sysinfo/sys/chatllm/`。
 >
-> 当前版本：1.0.6（2026-10-29）
+> 当前版本：1.0.6（2026-10-30）
+> **2026-10-30**：`embed_prompts` / `turbo_search_query` 与插件 / 素材向量能力已移除，
+> 相关待办不再适用；通用向量能力由 `kv_lib` 提供。
 
 ## P0 数据一致性
 
@@ -16,10 +24,10 @@
 
 - [ ] **旧数据迁移脚本演练**
   - 位置：`ts/migrate_dialogues.ts`
-  - 现状：本机旧表已清理；脚本已改为迁移旧 SQLite 分库 / `designdb/chatllm` 并清理。
+  - 现状：本机旧表已清理；脚本迁移旧 SQLite 分库 / `designdb/chatllm` 并清理，可重复执行。
   - 验收：在备份旧库上运行，对话数、消息数、首尾 `seq` 一致，旧库删除。
 
-## P1 功能
+## P1 功能与契约
 
 - [ ] **max_tokens 传入模型**
   - 位置：`src/ffi/chat.rs`、`src/ffi/run.rs`
@@ -28,8 +36,8 @@
 
 - [ ] **对话级模型配置**
   - 位置：`src/ffi/run.rs` → `create_new_chat`
-  - 现状：`model_name` 传空字符串；`system_prompt` / `model_config` 未从请求写入。
-  - 验收：新建对话使用请求中的模型名、提示词与模型参数。
+  - 现状：`create_dialogue_with` 的 `model_name` 传空字符串；请求中的 `system_prompt` 会写入，但 `model_config` 未从请求写入。
+  - 验收：新建对话使用请求中的模型名与模型参数。
 
 - [ ] **dialogue_search 检索消息内容**
   - 位置：`src/utils/dialogue.rs` → `search_dialogue`
@@ -37,31 +45,31 @@
   - 决策：确认是否需要消息全文检索；需要则接 designdb 或 FTS。
   - 验收：按消息内容能命中对话。
 
-- [ ] **旧推理代码处置**
-  - 位置：`src/utils/config.rs`、`generate.rs`、`loader.rs`、`prompt.rs`、`token.rs`、`ranking.rs`
-  - 现状：未挂载 / 未启用。
-  - 决策：删除，或迁移为独立模块并补齐依赖。
+- [ ] **系统依赖声明**
+  - 位置：`dytes.json` → `dependencies-sys`
+  - 现状：只声明 `database` / `designdb` / `markparse`；代码还 dlopen `plugin_lib.dll` 与 `libsiliconflow_t2t.dll`，缺失时只在运行时调用报错。
+  - 建议：补声明并确认发布顺序；加载失败给出明确错误。
 
 ## P2 架构与健壮性
 
 - [ ] **外部库路径配置化**
-  - `db.rs` / `siliconflow.rs` 把 `./libary/*.so` 写死。
+  - `db.rs` / `designdb.rs` / `siliconflow.rs` / `plugin_lib.rs` / `markparse.rs` 把 `./libary/*` 与 `./models/*` 写死。
   - 建议：环境变量或配置注入；加载失败给出清晰错误。
 
 - [ ] **64 KiB 输出缓冲**
-  - 向量或大结果可能被截断；支持分块读取或扩容。
+  - `cjson::write_json_out` 与各 `call_ffi` 的缓冲均为 65,536 字节；大结果可能被截断（返回 `-2`）。
+  - 建议：支持分块读取或扩容。
 
 - [ ] **时间戳统一**
-  - `dialogue` 用 `CURRENT_TIMESTAMP`（文本），`messages` 用 Unix 秒。
+  - `dialogue` 用 `datetime('now')`（文本），`messages` 用 Unix 毫秒（`now_ms`）。
 
 - [ ] **UUID 校验**
-  - `valid_uuid` 只是宽松的 36 位十六进制 + 连字符校验。
+  - `valid_uuid` 只校验长度 36 且字符为十六进制或连字符，未校验分组格式与版本位。
 
 ## P3 测试、CI 与发布
 
 - [ ] **集成测试标记 / 文档**
-  - `tests/embed_prompts.rs`、`tests/turbovec_bench.rs` 依赖宿主服务与模型。
-  - 建议：`#[ignore]` + 运行前提说明。
+  - `tests/compile_bench.rs` 依赖编译环境，当前无 `#[ignore]`；建议加 `#[ignore]` 或运行前提说明。
 
 - [ ] **CI 增加检查**
   - 目前只执行 `cargo build --release`；建议补 `cargo test`、`cargo fmt --check`、`cargo clippy`。
@@ -75,7 +83,7 @@
 
 ## P4 代码质量
 
-- [ ] 错误码集中定义（当前 `400100`–`400401` 散落在多个文件）。
+- [ ] 错误码集中定义（当前 `400100`–`400500` 多个分段散落在各文件，`400503` 未使用）。
 - [ ] SQL 统一参数化 / 查询构造，减少 `format!` 拼接。
 - [ ] `eprintln!` 调试日志改为结构化日志并控制级别。
 
@@ -85,4 +93,7 @@
 - [x] 删除 `skills` 表与 `skills_*`，技能读取统一 `plugin_lib.get_skills`（1.0.5）。
 - [x] 清理旧 `messages` / `messages_fts` / `sessions` 表（1.0.6）。
 - [x] 移除 `designdb/chatllm` 过渡单库初始化。
-- [x] README 补充能力、存储、构建与文档入口。
+- [x] 消息改存 `designdb/<dialogue_id>`，`setup.ts` 负责建表、索引与旧表清理。
+- [x] 插件对话复用：`plugin_uuid` / `dialogue_id` / `show_status`。
+- [x] 移除 `embed_prompts` / `turbo_search_query` 与插件 / 素材向量、嵌入测试及模型依赖。
+- [x] README 与 todo 文档按 1.0.6 代码校正。
