@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::utils::dialogue::{
-    append_message, create_dialogue_with, get_dialogue, is_valid_uuid, update_dialogue,
-    update_keyword, DialoguePatch,
+    append_message, create_dialogue_with, get_dialogue, is_valid_uuid, message_history,
+    update_dialogue, update_keyword, DialoguePatch,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -142,6 +142,109 @@ fn create_new_chat(
     .map_err(|e| ChatFlowError::CreateDialogue(e.to_string()))
 }
 
+/// 一次 chat 写入的聊天插件候选数量上限。
+const CHAT_PLUGIN_TOP_K: i64 = 5;
+
+/// 把 `chat_plugin` 检索结果格式化为对话中的 assistant 文本。
+///
+/// 纯函数，便于单测；`value` 预期是插件元数据 JSON 字符串。
+fn format_plugin_reply(hits: &[Value]) -> String {
+    if hits.is_empty() {
+        return install_plugin_prompt();
+    }
+
+    let mut lines = Vec::with_capacity(hits.len() * 2 + 1);
+    lines.push(format!("找到 {} 个匹配的 chat 插件：", hits.len()));
+    for (index, hit) in hits.iter().enumerate() {
+        let key = hit.get("key").and_then(Value::as_str).unwrap_or("");
+        let score = hit.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+        let meta: Option<Value> = hit
+            .get("value")
+            .and_then(Value::as_str)
+            .and_then(|raw| serde_json::from_str(raw).ok());
+        let name = meta
+            .as_ref()
+            .and_then(|v| v.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or(key);
+        lines.push(format!("{}. {}（score {:.4}）", index + 1, name, score));
+
+        let lib_name = meta
+            .as_ref()
+            .and_then(|v| v.get("lib_name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let ffi_symbol = meta
+            .as_ref()
+            .and_then(|v| v.get("ffi_symbol"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !lib_name.is_empty() || !ffi_symbol.is_empty() {
+            lines.push(format!(
+                "   lib_name: {}, ffi_symbol: {}",
+                lib_name, ffi_symbol
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+/// 没有可用聊天插件时的提示。
+fn install_plugin_prompt() -> String {
+    "未找到可用的聊天插件，请先安装插件：deepseek 或 siliconflow。".to_string()
+}
+
+/// 从 `chat_plugin` 命中记录中取出插件调用信息。
+fn plugin_target(hit: &Value) -> Option<(String, String)> {
+    let meta: Value = hit
+        .get("value")
+        .and_then(Value::as_str)
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or(Value::Null);
+    let lib_name = meta.get("lib_name").and_then(Value::as_str)?.to_string();
+    let ffi_symbol = meta.get("ffi_symbol").and_then(Value::as_str)?.to_string();
+    Some((lib_name, ffi_symbol))
+}
+
+/// 调用 Top1 聊天插件，把当前对话内容交给它并取回 content。
+///
+/// 插件不可调用时返回 `Ok(None)`，由调用方回退到候选列表文本。
+fn call_top_chat_plugin(
+    hits: &[Value],
+    prompt: &str,
+    uuid: &str,
+) -> anyhow::Result<Option<String>> {
+    let Some(hit) = hits.first() else {
+        return Ok(None);
+    };
+    let Some((lib_name, ffi_symbol)) = plugin_target(hit) else {
+        return Ok(None);
+    };
+
+    let messages: Vec<Value> = message_history(uuid)?
+        .into_iter()
+        .filter_map(|message| {
+            let role = message.get("role")?.as_str()?;
+            let content = message.get("content")?.as_str()?;
+            if content.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({ "role": role, "content": content }))
+        })
+        .collect();
+    let request = serde_json::json!({
+        "prompt": prompt,
+        "messages": messages
+    });
+
+    let data = crate::utils::plugin::call(&lib_name, &ffi_symbol, &request)?;
+    Ok(data
+        .get("content")
+        .and_then(Value::as_str)
+        .filter(|content| !content.trim().is_empty())
+        .map(str::to_string))
+}
+
 /// 一次 chat 只负责对话与消息持久化：
 /// 1) 校验 uuid
 /// 2) 新建 / 续聊
@@ -252,6 +355,26 @@ pub fn run_chat(
 
     if let Err(e) = append_message(&uuid, "user", prompt) {
         return Err(ChatFlowError::AppendUser(e.to_string()));
+    }
+
+    // 用户消息落库后，检索 chat 分类插件：
+    // - 无候选：提示安装插件；
+    // - 有候选：调用 Top1 插件，把对话内容交给它并写回 assistant；
+    // - 插件不可调用：回退为候选列表文本。
+    let plugin_reply = match crate::utils::kv::search_chat_plugins(prompt, CHAT_PLUGIN_TOP_K) {
+        Ok(hits) if hits.is_empty() => install_plugin_prompt(),
+        Ok(hits) => match call_top_chat_plugin(&hits, prompt, &uuid) {
+            Ok(Some(content)) => content,
+            Ok(None) => format_plugin_reply(&hits),
+            Err(e) => {
+                eprintln!("[chat] 调用聊天插件失败: {:#}", e);
+                format!("{:#}", e)
+            }
+        },
+        Err(e) => format!("chat 插件检索失败：{:#}", e),
+    };
+    if let Err(e) = append_message(&uuid, "assistant", &plugin_reply) {
+        eprintln!("[chat] 写入插件检索结果失败: {:#}", e);
     }
 
     let dialogue = match get_dialogue(&uuid) {
@@ -368,5 +491,42 @@ mod tests {
                 .count(),
             19
         );
+    }
+
+    #[test]
+    fn format_plugin_reply_without_hits() {
+        assert!(format_plugin_reply(&[]).contains("请先安装插件"));
+    }
+
+    #[test]
+    fn plugin_target_reads_metadata() {
+        let hit = serde_json::json!({
+            "key": "chat-plugin-do-test-chat",
+            "value": "{\"lib_name\":\"do_test_chat\",\"ffi_symbol\":\"chat\"}"
+        });
+        assert_eq!(
+            plugin_target(&hit),
+            Some(("do_test_chat".to_string(), "chat".to_string()))
+        );
+        assert!(plugin_target(&serde_json::json!({ "value": "not-json" })).is_none());
+    }
+
+    #[test]
+    fn format_plugin_reply_lists_plugin_metadata() {
+        let hits = vec![
+            serde_json::json!({
+                "key": "chat-plugin-deepseek",
+                "score": 0.91234,
+                "value": "{\"name\":\"DeepSeek\",\"lib_name\":\"libdeepseek\",\"ffi_symbol\":\"chat\"}"
+            }),
+            serde_json::json!({ "key": "chat-plugin-broken", "score": 0.4, "value": "not-json" }),
+        ];
+        let reply = format_plugin_reply(&hits);
+
+        assert!(reply.contains("找到 2 个匹配的 chat 插件"));
+        assert!(reply.contains("1. DeepSeek（score 0.9123）"));
+        assert!(reply.contains("lib_name: libdeepseek, ffi_symbol: chat"));
+        // value 不是合法 JSON 时退化为 key。
+        assert!(reply.contains("2. chat-plugin-broken"));
     }
 }

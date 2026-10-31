@@ -1,7 +1,8 @@
 # chatllm 待办
 
-> **2026-10-30**：siliconflow 模型调用与 skills 注入已移除；`chat` 仅写入 user 消息，
-> 相关待办不再适用。向量 / 提示词检索能力也已移除。
+> **2026-10-30**：siliconflow 模型调用与 skills 注入已移除，向量 / 提示词检索能力已移除。
+> **2026-10-31**：`chat` 写入 user 消息后，用 `kv_lib` 检索 `chat_plugin`；无插件提示安装，
+> 有插件时调用 Top1（`do_test_chat`）并把供应商回复写回对话。
 
 > 本文件是 chatllm 仓库内的**唯一开发待办入口**。
 > 架构、接口与数据库说明见 `README.md` / `todo/README.md`；
@@ -9,7 +10,7 @@
 > 注意：本文件的 `P0–P4` 是优先级，不等同 `docs/analyze.md` 的优化批次编号。
 > 开发完成后回填 `dytes_sys_operations/sysinfo/sys/chatllm/`。
 >
-> 当前版本：1.0.6（2026-10-30）
+> 当前版本：1.0.8（2026-10-31）
 > **2026-10-30**：`embed_prompts` / `turbo_search_query` 与插件 / 素材向量能力已移除，
 > 相关待办不再适用；通用向量能力由 `kv_lib` 提供。
 
@@ -67,9 +68,6 @@
   - `valid_uuid` 只校验长度 36 且字符为十六进制或连字符，未校验分组格式与版本位。
 
 ## P3 测试、CI 与发布
-
-- [ ] **集成测试标记 / 文档**
-  - `tests/compile_bench.rs` 依赖编译环境，当前无 `#[ignore]`；建议加 `#[ignore]` 或运行前提说明。
 
 - [ ] **CI 增加检查**
   - 目前只执行 `cargo build --release`；建议补 `cargo test`、`cargo fmt --check`、`cargo clippy`。

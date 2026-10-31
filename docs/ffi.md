@@ -1,7 +1,9 @@
 # chatllm FFI 接口
 
-> 快照：chatllm **1.0.6**。当前只保留对话与消息持久化，不调用模型、不注入 skills。
-> 数据设计见 `db.md`。
+> 快照：chatllm **1.0.8**。对话与消息持久化；`chat` 会调用 `kv_lib` 检索
+> `chat_plugin`，有插件时调用 Top1 并把回复写入 assistant。
+> chatllm 不直接调用模型、不注入 skills。
+> 数据设计见 `db.md`，kv 调用见 `kv_lib.md`。
 
 ## 1. 调用约定
 
@@ -24,7 +26,7 @@ int (*)(const char *json_in, char *json_out);
 
 | FFI-Symbol | 导出函数 | 分类 | 说明 |
 | --- | --- | --- | --- |
-| `chat` | `post_chat` | 对话 | 新建 / 续聊并写入 user 消息；不生成回复 |
+| `chat` | `post_chat` | 对话 | 新建 / 续聊，写 user 消息；检索 `chat_plugin` 并写 assistant 结果 |
 | `dialogue_list` | `post_dialogue_list` | 对话 | 对话分页列表（排除归档与 `show_status = 2`） |
 | `dialogue_update` | `post_dialogue_update` | 对话 | 更新对话字段 |
 | `dialogue_search` | `post_dialogue_search` | 对话 | 按 `title` / `keyword` 分页搜索 |
@@ -34,8 +36,32 @@ int (*)(const char *json_in, char *json_out);
 
 ### 3.1 `chat` → `post_chat`
 
-当前流程：校验 / 解析目标对话 → 可选写入 `system_prompt` → 写 user 消息 → 返回对话信息。
-**不调用 siliconflow、不注入 skills、不写 assistant 消息。**
+当前流程：校验 / 解析目标对话 → 可选写入 `system_prompt` → 写 user 消息 →
+调用 `kv_lib` 检索 `chat_plugin` → 把结果作为 assistant 消息写回 → 返回对话信息。
+**不调用 siliconflow、不注入 skills；`content` / `content_html` 仍为空字符串。**
+
+**插件检索与调用（assistant 消息）**
+
+- 使用同一段 `prompt` 作为 query，`collection = chat_plugin`，`top_k = 5`；
+- **无候选**：assistant 写入
+  `未找到可用的聊天插件，请先安装插件：deepseek 或 siliconflow。`；
+- **有候选**：取 Top1，按记录 `value` 中的 `lib_name` / `ffi_symbol` 调用插件
+  （`./plugins/<lib_name>/<lib_name>.dll` 或 `./libary/*.dll`），请求携带
+  `prompt` 与当前对话 `messages`；把插件返回的 `content` 写入 assistant；
+- **AI 配置**：插件读取 `info.db.ai_supplier`，未配置时默认 `deepseek`；
+  对应 token（`deepseek_app_key` / `silicon_app_key`）未配置时返回错误，
+  assistant 写入例如 `AI 配置错误：未配置 deepseek token：deepseek_app_key`；
+- 插件不可调用时回退为候选列表文本：
+
+  ```text
+  找到 N 个匹配的 chat 插件：
+  1. <name>（score 0.xxxx）
+     lib_name: <lib_name>, ffi_symbol: <ffi_symbol>
+  ```
+
+- 插件调用失败时把插件的错误消息写入 assistant；检索失败写入
+  `chat 插件检索失败：<原因>`，均不阻断 user 消息落库；
+- 结果同时通过 `chat_detail` 的 `content_html` 渲染。
 
 **请求 `ChatReq`**
 

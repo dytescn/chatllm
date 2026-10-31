@@ -40,7 +40,7 @@
 
 ### S2 从代码提取事实
 
-- **输入**：`src/`、`setup.ts`、`dytes.json`、`Cargo.toml`、`.github/workflows/`、`ts/`、`tests/`。
+- **输入**：`src/`、`setup.ts`、`dytes.json`、`Cargo.toml`、`.github/workflows/`、`ts/`、`runflow/`。
 - **动作**：按固定维度提取，每条记录“结论 + 证据文件”。
   - FFI 符号与请求/响应结构；
   - 存储位置、表结构、分片与迁移；

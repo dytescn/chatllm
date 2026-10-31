@@ -1,7 +1,9 @@
 # chatllm 流程与分类梳理（思考稿）
 
 > **2026-10-30 更新**：`embed_prompts` / `turbo_search_query`、siliconflow 模型调用与 skills 注入已移除；
-> 文中检索 / 生成相关步骤仅作历史讨论，当前 `chat` 只写入 user 消息。
+> 文中检索 / 生成相关步骤仅作历史讨论。
+> **2026-10-31 更新**：`chat` 写入 user 消息后检索 `chat_plugin`：无插件提示安装，
+> 有插件则调用 Top1 并把回复写回对话，见 `kv_lib.md` 与 `runflow/base.md`。
 
 > 状态：思考稿 v0.3，讨论中。只整理逻辑，不改其他文档与代码。
 > 依据：`docs/facts.md`（1.0.6 现状）、`docs/contract.md`（v1 候选冻结）。

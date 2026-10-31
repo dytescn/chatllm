@@ -100,14 +100,17 @@
 | --- | --- | --- | --- |
 | database | `./libary/database.dll` / `.so` | `post_db_query`、`post_db_insert`、`post_db_update` | `db.rs` |
 | designdb | `./libary/libdesigndb.dll` / `.so` | `post_db_query`、`post_db_insert`、`post_db_update`、`post_db_delete` | `designdb.rs` |
+| info_lib | `./libary/info_lib.dll` / `.so` | `info_get`、`info_list`、`info_post`、`info_update` | 依赖声明 |
+| kv_lib | `./libary/kv_lib.dll` / `.so` | `kv_*` | 依赖声明 |
+| plugin_lib | `./libary/plugin_lib.dll` / `.so` | `get_functions`、`patch_function` | 依赖声明 |
 | siliconflow | `./libary/libsiliconflow_t2t.dll` / `.so` | `post_chat` | `siliconflow.rs` |
 | plugin_lib | `./libary/plugin_lib.dll` / `.so` | `get_functions`、`get_skills`、`patch_function` | `plugin_lib.rs` |
 | markparse | `./libary/parse.dll` / `.so` | `post_markdown_to_html` | `markparse.rs` |
 
 - 所有路径相对 cwd（Piksel 安装根目录），在代码中写死。
 - 库句柄与符号用 `OnceLock` 缓存；加载失败在首次调用时报错。
-- `dytes.json` 的 `dependencies-sys` 只声明 `database 1.0.2`、`designdb 1.0.0`、`markparse 1.0.0`；
-  `plugin_lib`、`siliconflow` 未声明。
+- `dytes.json` 的 `dependencies-sys` 声明 `database 1.0.2`、`designdb 1.0.0`、`info_lib 0.1.0`、`kv_lib 0.1.0`、`markparse 1.0.0`、`plugin_lib 1.0.8`；
+  `info_lib`、`kv_lib`、`plugin_lib` 仅作依赖声明；`siliconflow` 未声明。
 - `dependencies-web`：`setting 1.0.0`、`chat_ui 1.0.6`。
 - 无额外环境变量。
 
@@ -142,17 +145,17 @@
 
 | 文件 | 用途 | 前提 |
 | --- | --- | --- |
-| `tests/compile_bench.rs` | 编译与产物统计 | 调用 `cargo`，依赖编译环境 |
+| `ts/base_1.ts` | 最小对话闭环基线（新建 / 续聊 / 列表 / 详情 / 搜索 / 更新） | 宿主服务 |
+| `runflow/base.ts` | 基础流程：发送数据 → 落库 → kv 检索插件 | 宿主服务、`kv_lib`、qwen3-embed |
 | `ts/test_chat.ts` | `post_chat` 手工测试 | 宿主服务 |
 | `ts/test_dialogue.ts` | 对话列表 / 更新 / 搜索 / 详情 | 宿主服务 |
 | `ts/test_search.ts` | 对话搜索测试 | 宿主服务 |
 | `ts/test_error.ts` | 错误码测试 | 宿主服务 |
 | `ts/migrate_dialogues.ts` | 旧对话迁移与清理，`--keep` 保留旧库 | 宿主服务、两个库 |
 
-- `compile_bench` 会调用 `cargo`；其余脚本需要 `127.0.0.1:44944`。
+- 所有脚本需要 `127.0.0.1:44944`。
 - 原嵌入 / turbovec 测试与 `embed_prompts` / `turbo_search_query` 脚本已移除。
-
-- 测试均无 `#[ignore]`；CI 不执行 `cargo test`。
+- `tests/` 目录（`compile_bench.rs`）已删除。
 
 ## J. 代码外约定（待确认）
 

@@ -1,7 +1,7 @@
 {
   "name": "chatllm",
   "uuid": "69b786e9-19d9-4fe0-b868-048726e1e5b8",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "system for ai chat",
   "keywords": [
     "chat",
@@ -13,8 +13,13 @@
   "type": "sys",
   "dependencies-sys": {
     "database": "1.0.2",
+    "deepseek": "1.0.0",
     "designdb": "1.0.0",
-    "markparse": "1.0.0"
+    "info_lib": "0.1.0",
+    "kv_lib": "0.1.0",
+    "markparse": "1.0.0",
+    "plugin_lib": "1.0.8",
+    "siliconflow_t2t": "1.0.0"
   },
   "dependencies-web": {
     "chat_ui": "1.0.6"

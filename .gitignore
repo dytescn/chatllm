@@ -20,7 +20,6 @@ ggml_env/
 .gpt-2
 
 src/arm_neon.h
-tests/arm_neon.h
 
 zig-out/
 zig-cache/

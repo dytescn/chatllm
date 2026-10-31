@@ -4,13 +4,13 @@
 由 cyctron 以 `POST /chatllm` + `FFI-Symbol` 加载。运行时 cwd 是 Piksel 安装根目录，
 `./libary`、`./database`、`./designdb` 都相对该目录解析。
 
-当前版本：**1.0.6**（`Cargo.toml` 与 `dytes.json` 一致）。
+当前版本：**1.0.8**（`Cargo.toml` 与 `dytes.json` 一致）。
 
 ## 能力
 
 | FFI-Symbol | 导出函数 | 说明 |
 | --- | --- | --- |
-| `chat` | `post_chat` | 新建 / 续聊并写入 user 消息；不调用模型、不生成回复、不注入 skills |
+| `chat` | `post_chat` | 新建 / 续聊，写 user 消息；检索 `chat_plugin`，有插件时调用 Top1 并写回 assistant；不直接调用模型 |
 | `dialogue_list` | `post_dialogue_list` | 对话分页列表（排除归档与 `show_status = 2`） |
 | `dialogue_update` | `post_dialogue_update` | 更新标题、关键字、模型、提示词、模型参数、置顶 / 归档等 |
 | `dialogue_search` | `post_dialogue_search` | 按 `title` / `keyword` 分页搜索 |
@@ -33,9 +33,17 @@
 | --- | --- |
 | `./libary/database.dll`（`.so`） | SQLite 访问：`dialogue.db` |
 | `./libary/libdesigndb.dll`（`.so`） | 每对话消息库（PoloDB） |
+| `./libary/info_lib.dll`（`.so`） | `info.db` 的 `setting` / `router` 配置访问 |
+| `./libary/kv_lib.dll`（`.so`） | 插件能力 / 提示词向量检索：`src/utils/kv.rs` |
+| `./libary/plugin_lib.dll`（`.so`） | 设计插件 / 能力清单（依赖声明，当前未接入） |
+| `./libary/libdeepseek.dll`（`.so`） | DeepSeek 供应商插件：`do_test_chat` 按 `ai_supplier` 调用 |
+| `./libary/libsiliconflow_t2t.dll`（`.so`） | SiliconFlow 供应商插件：`do_test_chat` 按 `ai_supplier` 调用 |
 | `./libary/parse.dll`（`.so`） | 读取消息时生成 `content_html` |
 
-> `dytes.json` 的 `dependencies-sys` 只声明 `database` / `designdb` / `markparse`。
+> `dytes.json` 的 `dependencies-sys` 声明 `database` / `deepseek` / `designdb` /
+> `info_lib` / `kv_lib` / `markparse` / `plugin_lib` / `siliconflow_t2t`。
+> `info_lib`、`plugin_lib` 当前仅作依赖声明；`kv_lib` 由 `src/utils/kv.rs` 直接加载；
+> 两个供应商插件由 `do_test_chat` 按 `ai_supplier` 调用。
 
 ## 构建与发布
 
@@ -55,6 +63,7 @@ cargo build --release
 - `todo/optimization-tasks.md`：历史优化清单；
 - `docs/facts.md`：1.0.6 代码事实清单；
 - `docs/ffi.md`：FFI 接口说明；
+- `docs/kv_lib.md`：kv_lib 调用方式与 `src/utils/kv.rs` 封装；
 - `docs/db.md`：`dialogue.db` 与 designdb 对话存储；
 - `docs/analyze.md`：运行流程分析（历史分析，检索章节已过时）；
 - `docs/contract.md`：接口契约 v1（候选冻结）。
