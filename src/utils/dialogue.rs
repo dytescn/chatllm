@@ -4,7 +4,6 @@
 //! 表结构以 `docs/db.md` 为准，由 `setup.ts` 创建；本模块不再建表或补列。
 //! 消息操作见 `utils::message`，业务错误码见 `utils::errcode`。
 
-use crate::utils::cloud;
 use crate::utils::db::{db_execute, db_query, db_update};
 use crate::utils::designdb;
 use crate::utils::errcode::ChatError;
@@ -362,35 +361,20 @@ pub fn open_chat(
 
     message::append_message(&uuid, "user", prompt)
         .map_err(|e| ChatError::Append(e.to_string()))?;
-    if !prompt.trim().is_empty() {
-        reply_with_cloud(&uuid, prompt)?;
-    }
-    Ok((uuid, created))
-}
 
-/// 调用云端并把回复写成 assistant 消息；云端失败时写入错误文本，不阻断对话。
-fn reply_with_cloud(uuid: &str, prompt: &str) -> Result<(), ChatError> {
-    let history = message::message_history(uuid).map_err(|e| ChatError::Append(e.to_string()))?;
-    let pairs: Vec<(String, String)> = history
-        .iter()
-        .filter_map(|item| {
-            let role = item.get("role")?.as_str()?.to_string();
-            let content = item.get("content")?.as_str()?.to_string();
-            Some((role, content))
-        })
-        .collect();
-    let refs: Vec<(&str, &str)> = pairs
-        .iter()
-        .map(|(role, content)| (role.as_str(), content.as_str()))
-        .collect();
-    let messages = cloud::messages_from(&refs);
-
-    let content = match cloud::chat(prompt, &messages) {
-        Ok(reply) => reply.content,
-        Err(e) => format!("{:#}", e),
+    // 本地流程：think 查询 chat_think 分类 → reply 只消费结果，不访问 kv_lib。
+    let think = match crate::utils::think::query(prompt, 3) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("[chat] chat_think 检索失败: {:#}", error);
+            None
+        }
     };
-    message::append_message(uuid, "assistant", &content)
-        .map_err(|e| ChatError::Append(e.to_string()))
+    let reply = crate::utils::reply::Reply::from_think(think, prompt);
+    message::append_message(&uuid, "assistant", &reply.content)
+        .map_err(|e| ChatError::Append(e.to_string()))?;
+
+    Ok((uuid, created))
 }
 
 pub fn is_valid_uuid(uuid: &str) -> bool {

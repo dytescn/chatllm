@@ -7,3 +7,5 @@ pub mod errcode;   // 业务错误码
 pub mod kv;       // 用于对象查询
 pub mod markparse;  // 用于内容解析
 pub mod message;  // 对话消息
+pub mod reply;    // 助手回复组装
+pub mod think;    // 模型思考内容
