@@ -1,7 +1,7 @@
 {
   "name": "chatllm",
   "uuid": "69b786e9-19d9-4fe0-b868-048726e1e5b8",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "system for ai chat",
   "keywords": [
     "chat",
@@ -22,7 +22,7 @@
     "siliconflow_t2t": "1.0.0"
   },
   "dependencies-web": {
-    "chat_ui": "1.0.6"
+    "chat_ui": "1.0.12"
   },
   "exports": {
     "./target/release/chatllm.dll": "chatllm.dll",

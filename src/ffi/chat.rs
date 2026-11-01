@@ -1,194 +1,131 @@
 // src/ffi/chat.rs
-use crate::ffi::run::{run_chat, ChatOptions};
-use crate::ffi::types::{
-    ChatDetailReq, ChatReq, DialogueListReq, DialogueSearchReq, DialogueUpdateReq,
-};
-use crate::utils::cjson::{write_error, write_success};
-use crate::utils::dialogue::{
-    is_valid_uuid, list_dialogue, list_messages, search_dialogue, update_dialogue, DialoguePatch,
-};
+//
+// chatllm 对外只有三个 FFI 接口，调用约定见 `docs/ffi.md`：
+// `int (*)(const char *json_in, char *json_out);`
+// 本层只做输入解析与错误码映射，业务逻辑在 `utils::dialogue`。
+use crate::ffi::types::{ChatFlow, Dialogue, DialogueListReq, DialogueQuery};
+use crate::utils::cjson::{err_msg, read_body, write_error, write_success};
+use crate::utils::dialogue;
 use serde_json::json;
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{c_char, c_int};
 
-fn read_body<'a>(json_in: *const c_char) -> Result<&'a str, c_int> {
-    if json_in.is_null() {
-        return Err(400100);
-    }
-    unsafe { CStr::from_ptr(json_in).to_str().map_err(|_| 400101) }
-}
-
-fn err_msg(code: c_int) -> &'static str {
-    match code {
-        400100 => "json_in is null",
-        400101 => "invalid utf-8",
-        _ => "unknown error",
-    }
-}
-
-// 1. chat
+/// 对话列表。
+///
+/// FFI-Symbol：`patch_dialogue`
+/// 入参：`DialogueListReq`（`keyword` / `page` / `page_size`，均可空，允许空 body）
+/// 出参：`{ list, page, page_size, total }`
 #[unsafe(no_mangle)]
-pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let body = match read_body(json_in) {
-        Ok(s) => s,
-        Err(code) => return write_error(json_out, code, err_msg(code)),
-    };
-    let req: ChatReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
-    };
-
-    let options = ChatOptions {
-        system_prompt: req.system_prompt.clone(),
-        plugin_uuid: req.plugin_uuid.clone(),
-        dialogue_id: req.dialogue_id.clone(),
-        show_status: req.show_status,
-    };
-
-    match run_chat(
-        &req.prompt,
-        req.uuid.as_deref(),
-        req.name.as_deref(),
-        req.keyword.as_deref(),
-        &options,
-    ) {
-        Ok(out) => write_success(
-            json_out,
-            "success",
-            json!({
-                "uuid": out.uuid,
-                "created": out.created,
-                "prompt": req.prompt,
-                "content": out.content,
-                "content_html": out.content_html,
-                "max_tokens": req.max_tokens,
-                "keyword": req.keyword,
-                "session_id": out.session_id,
-                "system_prompt": out.system_prompt,
-            }),
-        ),
-        Err(e) => write_error(json_out, e.code(), &e.message()),
-    }
-}
-
-// 2. dialogue_list
-#[unsafe(no_mangle)]
-pub extern "C" fn post_dialogue_list(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+pub extern "C" fn patch_dialogue(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     let body = if json_in.is_null() {
         ""
     } else {
         match read_body(json_in) {
-            Ok(s) => s,
+            Ok(body) => body,
             Err(code) => return write_error(json_out, code, err_msg(code)),
         }
     };
-
     let req: DialogueListReq = if body.trim().is_empty() {
         DialogueListReq {
-            page: None,
-            page_size: None,
-        }
-    } else {
-        match serde_json::from_str(body) {
-            Ok(v) => v,
-            Err(e) => return write_error(json_out, 400106, &format!("invalid json: {}", e)),
-        }
-    };
-
-    match list_dialogue(req.page, req.page_size) {
-        Ok(data) => write_success(json_out, "success", data),
-        Err(e) => write_error(json_out, 400302, &format!("list dialogue failed: {:#}", e)),
-    }
-}
-
-// 3. dialogue_update
-#[unsafe(no_mangle)]
-pub extern "C" fn post_dialogue_update(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let body = match read_body(json_in) {
-        Ok(s) => s,
-        Err(code) => return write_error(json_out, code, err_msg(code)),
-    };
-    let req: DialogueUpdateReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => return write_error(json_out, 400104, &format!("invalid json: {}", e)),
-    };
-    if !is_valid_uuid(&req.id) {
-        return write_error(json_out, 400103, "invalid uuid");
-    }
-
-    let patch = DialoguePatch {
-        title: req.title.as_deref(),
-        keyword: req.keyword.as_deref(),
-        model_name: req.model_name.as_deref(),
-        system_prompt: req.system_prompt.as_deref(),
-        model_config: req.model_config.as_deref(),
-        is_pinned: req.is_pinned,
-        is_archived: req.is_archived,
-        session_id: req.session_id.as_deref(),
-        show_status: req.show_status,
-    };
-    match update_dialogue(&req.id, &patch) {
-        Ok(_) => write_success(json_out, "success", json!({ "id": req.id })),
-        Err(e) => write_error(
-            json_out,
-            400303,
-            &format!("update dialogue failed: {:#}", e),
-        ),
-    }
-}
-
-// 4. dialogue_search
-#[unsafe(no_mangle)]
-pub extern "C" fn post_dialogue_search(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let body = if json_in.is_null() {
-        ""
-    } else {
-        match read_body(json_in) {
-            Ok(s) => s,
-            Err(code) => return write_error(json_out, code, err_msg(code)),
-        }
-    };
-
-    let req: DialogueSearchReq = if body.trim().is_empty() {
-        DialogueSearchReq {
             keyword: None,
             page: None,
             page_size: None,
         }
     } else {
         match serde_json::from_str(body) {
-            Ok(v) => v,
-            Err(e) => return write_error(json_out, 400105, &format!("invalid json: {}", e)),
+            Ok(req) => req,
+            Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
         }
     };
 
-    match search_dialogue(
-        req.keyword.as_deref().unwrap_or(""),
-        req.page,
-        req.page_size,
-    ) {
+    match dialogue::query_dialogue(req.keyword.as_deref(), req.page, req.page_size) {
         Ok(data) => write_success(json_out, "success", data),
-        Err(e) => write_error(
-            json_out,
-            400304,
-            &format!("search dialogue failed: {:#}", e),
-        ),
+        Err(e) => write_error(json_out, 400302, &format!("list dialogue failed: {:#}", e)),
     }
 }
 
-// 5. chat_detail（游标分页）
+/// 读取一条对话及其消息。
+///
+/// FFI-Symbol：`get_dialogue`
+/// 入参：`DialogueQuery`（`uuid` 必填，`before_id` / `after_id` / `limit` 可选）
+/// 出参：`{ dialogue: {...}, messages: { list, limit, first_id, last_id, has_more_before, has_more_after } }`
 #[unsafe(no_mangle)]
-pub extern "C" fn post_chat_detail(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+pub extern "C" fn get_dialogue(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     let body = match read_body(json_in) {
-        Ok(s) => s,
+        Ok(body) => body,
         Err(code) => return write_error(json_out, code, err_msg(code)),
     };
-    let req: ChatDetailReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => return write_error(json_out, 400107, &format!("invalid json: {}", e)),
+    let req: DialogueQuery = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
     };
 
-    match list_messages(&req.uuid, req.before_id, req.after_id, req.limit) {
+    match dialogue::dialogue_detail(&req.uuid, req.before_id, req.after_id, req.limit) {
         Ok(data) => write_success(json_out, "success", data),
-        Err(e) => write_error(json_out, 400306, &format!("chat_detail failed: {:#}", e)),
+        Err(e) => write_error(json_out, e.code(), &e.message()),
+    }
+}
+
+/// 更新对话信息。
+///
+/// FFI-Symbol：`update_dialogue`
+/// 入参：`Dialogue`（`uuid` 定位对话，`title` / `show_status` 为待更新项）
+/// 出参：`{ id }`
+#[unsafe(no_mangle)]
+pub extern "C" fn update_dialogue(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+    let body = match read_body(json_in) {
+        Ok(body) => body,
+        Err(code) => return write_error(json_out, code, err_msg(code)),
+    };
+    let req: Dialogue = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
+    };
+
+    match dialogue::update_chat(
+        req.uuid.as_deref(),
+        req.title.as_deref(),
+        req.show_status,
+        req.is_pinned,
+        req.is_archived,
+    ) {
+        Ok(id) => write_success(json_out, "success", json!({ "id": id })),
+        Err(e) => write_error(json_out, e.code(), &e.message()),
+    }
+}
+
+/// 创建一条对话。
+///
+/// FFI-Symbol：`post_message`
+/// 入参：`ChatFlow`（`prompt` 必填；`uuid` 非空时续聊已有对话）
+/// 出参：`{ uuid, created, prompt, max_tokens }`
+#[unsafe(no_mangle)]
+pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+    let body = match read_body(json_in) {
+        Ok(body) => body,
+        Err(code) => return write_error(json_out, code, err_msg(code)),
+    };
+    let req: ChatFlow = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
+    };
+
+    match dialogue::open_chat(
+        &req.prompt,
+        req.uuid.as_deref(),
+        req.plugin_uuid.as_deref(),
+        req.title.as_deref(),
+        req.show_status,
+    ) {
+        Ok((uuid, created)) => write_success(
+            json_out,
+            "success",
+            json!({
+                "uuid": uuid,
+                "created": created,
+                "prompt": req.prompt,
+                "max_tokens": req.max_tokens,
+            }),
+        ),
+        Err(e) => write_error(json_out, e.code(), &e.message()),
     }
 }
