@@ -362,16 +362,15 @@ pub fn open_chat(
     message::append_message(&uuid, "user", prompt)
         .map_err(|e| ChatError::Append(e.to_string()))?;
 
-    // 本地流程：think 查询 chat_think 分类 → reply 只消费结果，不访问 kv_lib。
-    let think = match crate::utils::think::query(prompt, 3) {
-        Ok(result) => result,
+    // 最简流程：查询 kv 的 chat 分类；命中记录带 plugin 时执行插件。
+    let content = match crate::utils::chat::handle(prompt) {
+        Ok(content) => content,
         Err(error) => {
-            eprintln!("[chat] chat_think 检索失败: {:#}", error);
-            None
+            eprintln!("[chat] 处理消息失败: {:#}", error);
+            format!("我收到你的信息了：{prompt}")
         }
     };
-    let reply = crate::utils::reply::Reply::from_think(think, prompt);
-    message::append_message(&uuid, "assistant", &reply.content)
+    message::append_message(&uuid, "assistant", &content)
         .map_err(|e| ChatError::Append(e.to_string()))?;
 
     Ok((uuid, created))

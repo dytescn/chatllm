@@ -1,3 +1,4 @@
+pub mod chat;    // 最简对话流程（kv chat 分类 + 插件）
 pub mod cjson; // ffi对话接口
 pub mod cloud;   // 云端模型调用
 pub mod db;    // 结构化数据库

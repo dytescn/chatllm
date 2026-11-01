@@ -154,6 +154,9 @@ pub fn list(
     )
 }
 
+/// `chat` 集合：对话内容检索。
+pub const COLLECTION_CHAT: &str = "chat";
+
 /// `kv_search`：按文本相似度检索。
 ///
 /// `candidate_keys` 用于先由业务元数据缩小范围，再点查向量。
@@ -177,6 +180,11 @@ pub fn search(
             "with_value": with_value
         }),
     )
+}
+
+/// 在 `chat` 集合中检索对话内容，返回原始 `data`（含 `list`）。
+pub fn search_chat(query: &str, top_k: i64) -> Result<Value> {
+    search(COLLECTION_CHAT, query, top_k, 0.0, None, true)
 }
 
 /// 在 `plugin` 集合中检索插件能力，返回候选列表。
