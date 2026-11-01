@@ -102,19 +102,20 @@ pub fn call_ffi(symbol: &str, request: &Value) -> Result<Value> {
     parse_response(symbol, out)
 }
 
-/// `kv_collection_list`：集合列表与统计。
+/// `kv_collection`（action=list）：集合列表与统计。
 pub fn collection_list(page: Option<i64>, page_size: Option<i64>) -> Result<Value> {
     call_ffi(
-        "collection_list",
-        &json!({ "page": page, "page_size": page_size }),
+        "collection",
+        &json!({ "action": "list", "page": page, "page_size": page_size }),
     )
 }
 
-/// `kv_get`：按 key 读取记录；缺失的 key 放在 `missing` 中。
+/// `kv_record`（action=get）：按 key 读取记录；缺失的 key 放在 `missing` 中。
 pub fn get(collection: &str, keys: &[&str], with_vector: bool) -> Result<Value> {
     call_ffi(
-        "get",
+        "record",
         &json!({
+            "action": "get",
             "collection": collection,
             "keys": keys,
             "with_vector": with_vector
@@ -122,18 +123,19 @@ pub fn get(collection: &str, keys: &[&str], with_vector: bool) -> Result<Value> 
     )
 }
 
-/// `kv_put`：批量写入 / 更新记录；带 `text` 时自动生成向量。
+/// `kv_record`（action=put）：批量写入 / 更新记录；带 `text` 时自动生成向量。
 pub fn put(collection: &str, items: &[Value]) -> Result<Value> {
     call_ffi(
-        "put",
+        "record",
         &json!({
+            "action": "put",
             "collection": collection,
             "items": items
         }),
     )
 }
 
-/// `kv_list`：分页扫描集合记录。
+/// `kv_record`（action=list）：分页扫描集合记录。
 pub fn list(
     collection: &str,
     prefix: Option<&str>,
@@ -141,8 +143,9 @@ pub fn list(
     page_size: Option<i64>,
 ) -> Result<Value> {
     call_ffi(
-        "list",
+        "record",
         &json!({
+            "action": "list",
             "collection": collection,
             "prefix": prefix,
             "page": page,
@@ -189,13 +192,14 @@ pub fn search_plugins(query: &str, top_k: i64) -> Result<Vec<Value>> {
         .unwrap_or_default())
 }
 
-/// `kv_collection_put`：创建 / 更新集合。
+/// `kv_collection`（action=put）：创建 / 更新集合。
 ///
 /// 集合已存在时只更新传入字段，`created = false`，可安全重复调用。
 pub fn collection_put(code: &str, name: &str, description: &str, sort: i64) -> Result<Value> {
     call_ffi(
-        "collection_put",
+        "collection",
         &json!({
+            "action": "put",
             "code": code,
             "name": name,
             "description": description,
@@ -233,7 +237,7 @@ pub fn search_chat_plugins(query: &str, top_k: i64) -> Result<Vec<Value>> {
         .unwrap_or_default())
 }
 
-/// `kv_embed`：为已有记录补齐 / 刷新向量。
+/// `kv_embed`（action=embed）：为已有记录补齐 / 刷新向量。
 pub fn embed(
     collection: &str,
     keys: Option<&[String]>,
@@ -244,6 +248,7 @@ pub fn embed(
     call_ffi(
         "embed",
         &json!({
+            "action": "embed",
             "collection": collection,
             "keys": keys,
             "limit": limit,
@@ -253,7 +258,10 @@ pub fn embed(
     )
 }
 
-/// `kv_stats`：集合 / 分片 / 索引统计；`collection` 为空时返回全部。
+/// `kv_collection`（action=stats）：集合 / 分片 / 索引统计；`collection` 为空时返回全部。
 pub fn stats(collection: Option<&str>) -> Result<Value> {
-    call_ffi("stats", &json!({ "collection": collection }))
+    call_ffi(
+        "collection",
+        &json!({ "action": "stats", "collection": collection }),
+    )
 }

@@ -69,17 +69,17 @@ int post_kv_search(const char *json_in, char *json_out);
 | 函数 | 对应 FFI | 说明 |
 | --- | --- | --- |
 | `call_ffi(symbol, &request)` | 任意 `post_kv_*` | 通用入口，返回响应 `data` |
-| `collection_list(page, page_size)` | `kv_collection_list` | 集合列表与统计 |
-| `get(collection, keys, with_vector)` | `kv_get` | 按键读取记录 |
-| `put(collection, items)` | `kv_put` | 批量写入 / 更新，按 `text` 生成向量 |
-| `list(collection, prefix, page, page_size)` | `kv_list` | 分页扫描 |
+| `collection_list(page, page_size)` | `kv_collection`（`action=list`） | 集合列表与统计 |
+| `get(collection, keys, with_vector)` | `kv_record`（`action=get`） | 按键读取记录 |
+| `put(collection, items)` | `kv_record`（`action=put`） | 批量写入 / 更新，按 `text` 生成向量 |
+| `list(collection, prefix, page, page_size)` | `kv_record`（`action=list`） | 分页扫描 |
 | `search(collection, query, top_k, min_score, candidate_keys, with_value)` | `kv_search` | 文本相似度检索 |
 | `search_plugins(query, top_k)` | `kv_search` | 固定 `collection=plugin`，返回候选数组 |
-| `collection_put(code, name, description, sort)` | `kv_collection_put` | 创建 / 更新集合 |
-| `ensure_chat_plugin_collection()` | `kv_collection_put` | 确保 `chat_plugin` 存在 |
+| `collection_put(code, name, description, sort)` | `kv_collection`（`action=put`） | 创建 / 更新集合 |
+| `ensure_chat_plugin_collection()` | `kv_collection`（`action=put`） | 确保 `chat_plugin` 存在 |
 | `search_chat_plugins(query, top_k)` | `kv_search` | 固定 `collection=chat_plugin`，返回候选数组 |
-| `embed(collection, keys, limit, offset, force)` | `kv_embed` | 补齐 / 刷新向量 |
-| `stats(collection)` | `kv_stats` | 集合 / 分片 / 索引统计 |
+| `embed(collection, keys, limit, offset, force)` | `kv_embed`（`action=embed`） | 补齐 / 刷新向量 |
+| `stats(collection)` | `kv_collection`（`action=stats`） | 集合 / 分片 / 索引统计 |
 
 ### 4.1 检索聊天插件
 
@@ -135,22 +135,23 @@ kv::put("chat_plugin", &[json!({
 
 ```bash
 curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection_list" \
-  -d '{"page":1,"page_size":20}'
+  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection" \
+  -d '{"action":"list","page":1,"page_size":20}'
 ```
 
 ### 5.2 创建 chat_plugin 并写入聊天插件
 
 ```bash
 curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection_put" \
-  -d '{"code":"chat_plugin","name":"聊天插件","dim":1024,"model":"qwen3-embed"}'
+  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection" \
+  -d '{"action":"put","code":"chat_plugin","name":"聊天插件","dim":1024,"model":"qwen3-embed"}'
 ```
 
 ```bash
 curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_put" \
+  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_record" \
   -d '{
+    "action": "put",
     "collection": "chat_plugin",
     "items": [{
       "key": "chat-plugin-deepseek",
@@ -197,8 +198,8 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
 ```
 
 **排序规则**：`rank` 升序优先（`0` / 负数视为未排名，排在最后），
-同 rank 再按 `score` 降序、`key` 升序。`kv_list` 使用相同规则；
-`kv_get` 每条记录也会返回 `rank`。
+同 rank 再按 `score` 降序、`key` 升序。`kv_record`（`action=list`）使用相同规则；
+`kv_record`（`action=get`）每条记录也会返回 `rank`。
 
 参数：
 
@@ -215,8 +216,8 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
 
 ```bash
 curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_get" \
-  -d '{"collection":"chat_plugin","keys":["chat-plugin-deepseek"]}'
+  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_record" \
+  -d '{"action":"get","collection":"chat_plugin","keys":["chat-plugin-deepseek"]}'
 ```
 
 ### 5.5 扫描 / 统计 / 补向量
@@ -224,18 +225,18 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
 ```bash
 # 分页扫描
 curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_list" \
-  -d '{"collection":"chat_plugin","page":1,"page_size":20}'
+  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_record" \
+  -d '{"action":"list","collection":"chat_plugin","page":1,"page_size":20}'
 
 # 集合统计
 curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_stats" \
-  -d '{"collection":"chat_plugin"}'
+  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection" \
+  -d '{"action":"stats","collection":"chat_plugin"}'
 
 # 为文本非空的记录补向量
 curl -s -X POST http://127.0.0.1:44944/kv_lib \
   -H "Content-Type: application/libary" -H "FFI-Symbol: kv_embed" \
-  -d '{"collection":"chat_plugin","limit":100,"force":false}'
+  -d '{"action":"embed","collection":"chat_plugin","limit":100,"force":false}'
 ```
 
 ## 6. chat_plugin 在对话流程中的位置
@@ -280,7 +281,7 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
 - `KV_EMBED_MODEL` 必须在启动 cyctron 前设置；dll 与 cyctron 同进程。
 - `kv_record` 含 `rank INTEGER NOT NULL DEFAULT 0`；旧分片在首次
   `ensure_schema` 时自动执行 `ALTER TABLE ... ADD COLUMN rank`。
-- 模型缺失时 `kv_put` / `kv_search`（文本查询）返回 `500600`。
+- 模型缺失时 `kv_record`（`action=put`）/ `kv_search`（文本查询）返回 `500600`。
 - 纯文本检索失败可降级为无候选；写入失败应记录日志并继续对话。
 
 ## 8. 错误码
