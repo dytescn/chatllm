@@ -24,9 +24,19 @@
   "dependencies-web": {
     "chat_ui": "1.0.12"
   },
-  "exports": {
-    "./target/release/chatllm.dll": "chatllm.dll",
-    "./setup.ts": "setup.ts"
+  "platform-exports": {
+    "windows": {
+      "./target/release/chatllm.dll": "chatllm.dll",
+      "./setup.ts": "setup.ts"
+    },
+    "linux": {
+      "./target/release/libchatllm.so": "chatllm.so",
+      "./setup.ts": "setup.ts"
+    },
+    "macos": {
+      "./target/release/libchatllm.dylib": "chatllm.dylib",
+      "./setup.ts": "setup.ts"
+    }
   },
   "init": [
     "./setup.ts"
