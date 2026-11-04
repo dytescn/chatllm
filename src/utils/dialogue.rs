@@ -101,10 +101,22 @@ fn query_total(where_clause: &str) -> Result<u64> {
 // dialogues
 // ---------------------------------------------------------------------------
 
-/// 新建对话，可指定 `dialogue.id`（如 `plugin_uuid`）与 `show_status`。
+/// 新建对话，可指定 `dialogue.id`（如 `plugin_uuid`）、`show_status` 与 system。
 ///
 /// `show_status = 2` 的对话不会出现在 `list_dialogue` 的普通列表中。
-pub fn create_dialogue_with(id: Option<&str>, title: &str, show_status: i64) -> Result<String> {
+pub fn create_dialogue_with(
+    id: Option<&str>,
+    title: &str,
+    show_status: i64,
+    system_prompt: Option<&str>,
+) -> Result<String> {
+    println!(
+        "[dialogue] create: id={:?}, title={:?}, show_status={}, system={}",
+        id,
+        title,
+        show_status,
+        system_prompt.is_some()
+    );
     let uuid = match id {
         Some(id) => {
             if !valid_uuid(id) {
@@ -114,20 +126,26 @@ pub fn create_dialogue_with(id: Option<&str>, title: &str, show_status: i64) -> 
         }
         None => uuid::Uuid::new_v4().to_string(),
     };
+    let system = system_prompt
+        .map(|text| esc(text))
+        .unwrap_or_else(|| "NULL".to_string());
     let sql = format!(
         "INSERT INTO dialogue
-         (id, title, is_pinned, is_archived, show_status, message_count, last_seq,
-          created_at, updated_at)
-         VALUES ({}, {}, 0, 0, {}, 0, 0, datetime('now'), datetime('now'))",
+         (id, title, is_pinned, is_archived, show_status, system_prompt,
+          message_count, last_seq, created_at, updated_at)
+         VALUES ({}, {}, 0, 0, {}, {}, 0, 0, datetime('now'), datetime('now'))",
         esc(&uuid),
         esc(title),
         show_status,
+        system,
     );
     db_execute(DIALOGUE_DB, &sql).with_context(|| format!("插入对话 {} 失败", uuid))?;
+    println!("[dialogue] create 完成: {}", uuid);
     Ok(uuid)
 }
 
 pub fn get_dialogue(id: &str) -> Result<Option<Value>> {
+    println!("[dialogue] get: id={}", id);
     if !valid_uuid(id) {
         bail!("非法 uuid: {}", id);
     }
@@ -135,10 +153,16 @@ pub fn get_dialogue(id: &str) -> Result<Option<Value>> {
         DIALOGUE_DB,
         &format!("SELECT * FROM dialogue WHERE id = {} LIMIT 1", esc(id)),
     )?;
-    Ok(rows.into_iter().next().map(normalize_dialogue_row))
+    let found = rows.into_iter().next().map(normalize_dialogue_row);
+    println!("[dialogue] get 完成: id={}, found={}", id, found.is_some());
+    Ok(found)
 }
 
 pub fn list_dialogue(page: Option<i64>, page_size: Option<i64>) -> Result<Value> {
+    println!(
+        "[dialogue] list: page={:?}, page_size={:?}",
+        page, page_size
+    );
     let page = dialogue_page(page, page_size);
     let where_clause = "is_archived = 0 AND show_status != 2";
     let total = query_total(where_clause)?;
@@ -156,6 +180,10 @@ pub fn list_dialogue(page: Option<i64>, page_size: Option<i64>) -> Result<Value>
 }
 
 pub fn search_dialogue(keyword: &str, page: Option<i64>, page_size: Option<i64>) -> Result<Value> {
+    println!(
+        "[dialogue] search: keyword={:?}, page={:?}, page_size={:?}",
+        keyword, page, page_size
+    );
     let page = dialogue_page(page, page_size);
     let needle = keyword.trim();
     if needle.is_empty() {
@@ -191,6 +219,7 @@ pub struct DialoguePatch<'a> {
 }
 
 pub fn update_dialogue(id: &str, p: &DialoguePatch<'_>) -> Result<()> {
+    println!("[dialogue] update: id={}", id);
     if !valid_uuid(id) {
         bail!("非法 uuid: {}", id);
     }
@@ -225,6 +254,7 @@ pub fn update_dialogue(id: &str, p: &DialoguePatch<'_>) -> Result<()> {
 
 /// 删除对话及其全部消息（先删消息库，再删索引）。
 pub fn delete_dialogue(id: &str) -> Result<()> {
+    println!("[dialogue] delete: id={}", id);
     if !valid_uuid(id) {
         bail!("非法 uuid: {}", id);
     }
@@ -243,6 +273,10 @@ pub fn query_dialogue(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<Value> {
+    println!(
+        "[dialogue] query: keyword={:?}, page={:?}, page_size={:?}",
+        keyword, page, page_size
+    );
     match keyword.map(str::trim).filter(|s| !s.is_empty()) {
         Some(keyword) => search_dialogue(keyword, page, page_size),
         None => list_dialogue(page, page_size),
@@ -257,6 +291,10 @@ pub fn update_chat(
     is_pinned: Option<i64>,
     is_archived: Option<i64>,
 ) -> Result<String, ChatError> {
+    println!(
+        "[dialogue] update_chat: uuid={:?}, title={:?}, show_status={:?}, pinned={:?}, archived={:?}",
+        uuid, title, show_status, is_pinned, is_archived
+    );
     let id = uuid
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -284,6 +322,10 @@ pub fn dialogue_detail(
     after_id: Option<i64>,
     limit: Option<i64>,
 ) -> Result<Value, ChatError> {
+    println!(
+        "[dialogue] detail: uuid={}, before_id={:?}, after_id={:?}, limit={:?}",
+        uuid, before_id, after_id, limit
+    );
     if !valid_uuid(uuid) {
         return Err(ChatError::InvalidUuid(uuid.to_string()));
     }
@@ -308,10 +350,103 @@ fn new_title(title: Option<&str>, prompt: &str) -> String {
     }
 }
 
+/// 截断长文本，避免日志刷屏。
+fn preview(value: &str, max: usize) -> String {
+    let mut out = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= max {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// 已配置 AI 供应商后的对话流程：
+///
+/// 1. `think`：检索 `chat_think`；
+/// 2. 按 `|` 拆分为数组；
+/// 3. 数组中的每一段分别查询 `chat_plugin` 并执行插件；
+/// 4. 合并插件结果，交给 `reply` 生成最终 assistant 内容。
+///
+/// think 未命中或拆分后没有有效段时，跳过插件，直接把用户原 prompt 交给 `reply`。
+fn reply_with_pipeline(prompt: &str) -> String {
+    let thought = match crate::utils::think::query(prompt, crate::utils::think::TOP_K) {
+        Ok(value) => value,
+        Err(error) => {
+            println!("[chat] think 检索失败: {:#}", error);
+            None
+        }
+    };
+
+    let queries = thought
+        .as_deref()
+        .map(crate::utils::think::segments)
+        .unwrap_or_default();
+    let results = crate::utils::plugins::handle_many(&queries);
+    let plugin_result = crate::utils::plugins::join_results(&results);
+    let reply = crate::utils::reply::Reply::from_result(plugin_result.clone(), prompt);
+
+    if !reply.used_reply_plugin {
+        if let Some(input) = plugin_result.as_deref() {
+            record_reply_exchange(input, &reply.content);
+        }
+    }
+
+    reply.content
+}
+
+/// 把 plugins 结果与 reply_base 清洗结果写入 reply_base 系统对话。
+///
+/// 对话 id 使用 reply_base uuid；不存在时创建，并把 skills 写入 system_prompt。
+fn record_reply_exchange(input: &str, output: &str) {
+    let Some(uuid) = crate::utils::reply_base::uuid() else {
+        println!("[reply] reply_base 未安装，跳过系统对话写入");
+        return;
+    };
+    let skills = crate::utils::reply_base::skills();
+    println!(
+        "[reply] 写入 reply_base 系统对话: uuid={}, system={}, input={:?}, output={:?}",
+        uuid,
+        skills.is_some(),
+        preview(input, 200),
+        preview(output, 200)
+    );
+
+    match get_dialogue(&uuid) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            let title = "reply_base 系统对话";
+            if let Err(error) = create_dialogue_with(Some(&uuid), title, 2, skills.as_deref()) {
+                println!("[reply] 创建 reply_base 系统对话失败: {:#}", error);
+                return;
+            }
+            println!("[reply] 已创建 reply_base 系统对话: {}", uuid);
+        }
+        Err(error) => {
+            println!("[reply] 查询 reply_base 系统对话失败: {:#}", error);
+            return;
+        }
+    }
+
+    if !input.trim().is_empty() {
+        if let Err(error) = message::append_message(&uuid, "user", input) {
+            println!("[reply] 写入 reply_base user 消息失败: {:#}", error);
+        }
+    }
+    if !output.trim().is_empty() {
+        if let Err(error) = message::append_message(&uuid, "assistant", output) {
+            println!("[reply] 写入 reply_base assistant 消息失败: {:#}", error);
+        }
+    }
+}
+
 /// 新建或续聊对话，并把 `prompt` 写成一条 user 消息，返回 `(uuid, created)`。
 ///
 /// - `uuid` 非空：续聊已有对话，不存在则报错；
 /// - `plugin_uuid` 非空：以它作为对话 id，已存在则复用，新建时 `show_status` 默认 2；
+/// - `system_prompt`：仅新建对话时写入 `dialogue.system_prompt`；
 /// - 其余情况：自动生成 id，`show_status` 默认 1。
 pub fn open_chat(
     prompt: &str,
@@ -319,7 +454,17 @@ pub fn open_chat(
     plugin_uuid: Option<&str>,
     title: Option<&str>,
     show_status: Option<i64>,
+    system_prompt: Option<&str>,
 ) -> Result<(String, bool), ChatError> {
+    println!(
+        "[dialogue] open_chat: prompt={:?}, uuid={:?}, plugin_uuid={:?}, title={:?}, show_status={:?}, system={}",
+        preview(prompt, 200),
+        uuid,
+        plugin_uuid,
+        title,
+        show_status,
+        system_prompt.is_some()
+    );
     let (uuid, created) = match uuid.map(str::trim).filter(|s| !s.is_empty()) {
         Some(id) => {
             if !valid_uuid(id) {
@@ -342,9 +487,13 @@ pub fn open_chat(
                     Ok(Some(_)) => (id.to_string(), false),
                     Ok(None) => {
                         let title = new_title(title, prompt);
-                        let created =
-                            create_dialogue_with(Some(id), &title, show_status.unwrap_or(2))
-                                .map_err(|e| ChatError::Create(e.to_string()))?;
+                        let created = create_dialogue_with(
+                            Some(id),
+                            &title,
+                            show_status.unwrap_or(2),
+                            system_prompt,
+                        )
+                        .map_err(|e| ChatError::Create(e.to_string()))?;
                         (created, true)
                     }
                     Err(e) => return Err(ChatError::Load(e.to_string())),
@@ -352,27 +501,27 @@ pub fn open_chat(
             }
             None => {
                 let title = new_title(title, prompt);
-                let created = create_dialogue_with(None, &title, show_status.unwrap_or(1))
-                    .map_err(|e| ChatError::Create(e.to_string()))?;
+                let created =
+                    create_dialogue_with(None, &title, show_status.unwrap_or(1), system_prompt)
+                        .map_err(|e| ChatError::Create(e.to_string()))?;
                 (created, true)
             }
         },
     };
 
-    message::append_message(&uuid, "user", prompt)
-        .map_err(|e| ChatError::Append(e.to_string()))?;
+    message::append_message(&uuid, "user", prompt).map_err(|e| ChatError::Append(e.to_string()))?;
 
-    // 最简流程：查询 kv 的 chat 分类；命中记录带 plugin 时执行插件。
-    let content = match crate::utils::chat::handle(prompt) {
-        Ok(content) => content,
-        Err(error) => {
-            eprintln!("[chat] 处理消息失败: {:#}", error);
-            format!("我收到你的信息了：{prompt}")
-        }
-    };
+    // check 已在 FFI 入口完成；这里直接进入 think → plugins → reply。
+    let content = reply_with_pipeline(prompt);
     message::append_message(&uuid, "assistant", &content)
         .map_err(|e| ChatError::Append(e.to_string()))?;
 
+    println!(
+        "[dialogue] open_chat 完成: uuid={}, created={}, assistant={:?}",
+        uuid,
+        created,
+        preview(&content, 300)
+    );
     Ok((uuid, created))
 }
 

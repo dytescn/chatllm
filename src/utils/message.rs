@@ -45,6 +45,12 @@ fn normalize_message(mut doc: Value) -> Value {
 
 /// 追加一条消息，并把 `dialogue.last_seq` / `message_count` 加一。
 pub fn append_message(uuid: &str, role: &str, content: &str) -> Result<()> {
+    println!(
+        "[message] append: uuid={}, role={}, content={:?}",
+        uuid,
+        role,
+        preview(content, 200)
+    );
     if !is_valid_uuid(uuid) {
         bail!("非法 uuid: {}", uuid);
     }
@@ -86,6 +92,7 @@ pub fn append_message(uuid: &str, role: &str, content: &str) -> Result<()> {
     )
     .with_context(|| format!("刷新 {} 计数失败", uuid))?;
 
+    println!("[message] append 完成: uuid={}, seq={}", uuid, seq);
     Ok(())
 }
 
@@ -96,6 +103,7 @@ pub fn message_history(uuid: &str) -> Result<Vec<Value>> {
     }
     let mut all = designdb::query_all(uuid, MESSAGES, Some(json!({})), Some(json!({ "seq": 1 })))?;
     all.sort_by_key(|m| as_i64(m.get("seq"), 0));
+    println!("[message] history: uuid={}, count={}", uuid, all.len());
     Ok(all)
 }
 
@@ -106,6 +114,10 @@ pub fn list_messages(
     after_id: Option<i64>,
     limit: Option<i64>,
 ) -> Result<Value> {
+    println!(
+        "[message] list: uuid={}, before_id={:?}, after_id={:?}, limit={:?}",
+        uuid, before_id, after_id, limit
+    );
     if !is_valid_uuid(uuid) {
         bail!("非法 uuid: {}", uuid);
     }
@@ -160,6 +172,13 @@ pub fn list_messages(
         .and_then(|r| r.get("id"))
         .and_then(Value::as_i64);
 
+    println!(
+        "[message] list 完成: uuid={}, count={}, first_id={:?}, last_id={:?}",
+        uuid,
+        list.len(),
+        first_id,
+        last_id
+    );
     Ok(json!({
         "list": list,
         "limit": limit,
@@ -168,4 +187,16 @@ pub fn list_messages(
         "has_more_before": has_more_before,
         "has_more_after": has_more_after,
     }))
+}
+
+fn preview(value: &str, max: usize) -> String {
+    let mut out = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= max {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }

@@ -31,7 +31,10 @@ fn patch_dialogue_returns_visible_list() {
 
     let ids = list_ids(&res);
     assert!(ids.contains(&SEED_ID.to_string()), "应包含基础对话");
-    assert!(!ids.contains(&HIDDEN_ID.to_string()), "show_status = 2 不应出现");
+    assert!(
+        !ids.contains(&HIDDEN_ID.to_string()),
+        "show_status = 2 不应出现"
+    );
     assert!(!ids.contains(&ARCHIVED_ID.to_string()), "归档对话不应出现");
 }
 
@@ -41,15 +44,17 @@ fn patch_dialogue_searches_by_title() {
         return common::skip("patch_dialogue 搜索");
     }
 
-    let res = common::call(patch_dialogue, r#"{"keyword":"接口","page":1,"page_size":10}"#);
+    let res = common::call(
+        patch_dialogue,
+        r#"{"keyword":"接口","page":1,"page_size":10}"#,
+    );
     assert_eq!(res["code"], 200);
 
     let list = res["data"]["list"].as_array().unwrap();
     assert!(!list.is_empty(), "应能搜到「接口联调记录」");
-    assert!(list.iter().all(|row| row["title"]
-        .as_str()
-        .unwrap_or("")
-        .contains("接口")));
+    assert!(list
+        .iter()
+        .all(|row| row["title"].as_str().unwrap_or("").contains("接口")));
 }
 
 #[test]
@@ -58,7 +63,10 @@ fn update_dialogue_updates_title() {
         return common::skip("update_dialogue 更新");
     }
 
-    let updated = format!(r#"{{"uuid":"{}","title":"产品需求讨论（已更新）"}}"#, SEED_ID);
+    let updated = format!(
+        r#"{{"uuid":"{}","title":"产品需求讨论（已更新）"}}"#,
+        SEED_ID
+    );
     let res = common::call(update_dialogue, &updated);
     assert_eq!(res["code"], 200);
     assert_eq!(res["data"]["id"], SEED_ID);

@@ -9,8 +9,10 @@ use std::sync::OnceLock;
 /// database.so 路径（相对 cwd = /home/funx/app/piksel）
 #[cfg(windows)]
 const DB_SO_PATH: &str = "./libary/database.dll";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 const DB_SO_PATH: &str = "./libary/database.so";
+#[cfg(target_os = "macos")]
+const DB_SO_PATH: &str = "./libary/database.dylib";
 
 /// 输出缓冲区大小
 const OUT_BUF_SIZE: usize = 65536;
@@ -32,7 +34,7 @@ fn ensure_library() -> Result<&'static Library> {
     let lib =
         unsafe { Library::new(DB_SO_PATH) }.with_context(|| format!("加载 {} 失败", DB_SO_PATH))?;
     let _ = DB_LIB.set(lib);
-    eprintln!("[db] 加载 {} 成功", DB_SO_PATH);
+    println!("[db] 加载 {} 成功", DB_SO_PATH);
 
     DB_LIB.get().context("database 库未初始化")
 }
@@ -81,6 +83,11 @@ fn call_ffi(
     db_name: &str,
     sql: &str,
 ) -> Result<Value> {
+    println!(
+        "[db] call_ffi: db={:?}, sql={:?}",
+        db_name,
+        preview(sql, 300)
+    );
     let req = serde_json::json!({
         "path": db_name,
         "sql": sql
@@ -102,6 +109,7 @@ fn call_ffi(
         .with_context(|| format!("database 响应解析失败: {}", out_str))?;
 
     let code = value.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+    println!("[db] call_ffi 响应 code={}", code);
     if code != 200 && code != 0 {
         let msg = value
             .get("msg")
@@ -117,19 +125,35 @@ fn call_ffi(
 /// `db_name` 为库名（不含 .db），database.so 内部拼成 ./database/<db_name>.db
 pub fn db_query(db_name: &str, sql: &str) -> Result<Vec<Value>> {
     let value = call_ffi(db_query_fn()?, db_name, sql)?;
-    Ok(extract_rows(&value))
+    let rows = extract_rows(&value);
+    println!("[db] db_query: db={:?}, rows={}", db_name, rows.len());
+    Ok(rows)
 }
 
 /// 执行写语句（CREATE / INSERT / UPSERT / UPDATE）。
 pub fn db_execute(db_name: &str, sql: &str) -> Result<()> {
+    println!("[db] db_execute: db={:?}", db_name);
     let _ = call_ffi(db_insert_fn()?, db_name, sql)?;
     Ok(())
 }
 
 /// 执行更新 / 删除语句。
 pub fn db_update(db_name: &str, sql: &str) -> Result<()> {
+    println!("[db] db_update: db={:?}", db_name);
     let _ = call_ffi(db_update_fn()?, db_name, sql)?;
     Ok(())
+}
+
+fn preview(value: &str, max: usize) -> String {
+    let mut out = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= max {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn extract_rows(v: &Value) -> Vec<Value> {

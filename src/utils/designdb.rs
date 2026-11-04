@@ -17,8 +17,10 @@ use std::sync::OnceLock;
 
 #[cfg(windows)]
 const DESIGNDB_LIB: &str = "./libary/libdesigndb.dll";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 const DESIGNDB_LIB: &str = "./libary/libdesigndb.so";
+#[cfg(target_os = "macos")]
+const DESIGNDB_LIB: &str = "./libary/libdesigndb.dylib";
 
 /// 与 designdb 的 `write_json_out` 保持一致。
 const OUT_BUF_SIZE: usize = 65536;
@@ -44,7 +46,7 @@ fn ensure_library() -> Result<&'static Library> {
     let lib = unsafe { Library::new(DESIGNDB_LIB) }
         .with_context(|| format!("加载 {} 失败", DESIGNDB_LIB))?;
     let _ = LIB.set(lib);
-    eprintln!("[designdb] 加载 {} 成功", DESIGNDB_LIB);
+    println!("[designdb] 加载 {} 成功", DESIGNDB_LIB);
     LIB.get().context("designdb 库未初始化")
 }
 
@@ -94,6 +96,11 @@ fn delete_fn() -> Result<FfiFn> {
 }
 
 fn call(function: FfiFn, req: Value) -> Result<Value> {
+    println!(
+        "[designdb] call: path={:?}, collection={:?}",
+        req.get("path").and_then(Value::as_str),
+        req.get("collection").and_then(Value::as_str)
+    );
     let req_c = CString::new(req.to_string()).context("designdb 请求 JSON 含 \\0")?;
     let mut out_buf = vec![0u8; OUT_BUF_SIZE];
     let ret = unsafe { function(req_c.as_ptr(), out_buf.as_mut_ptr() as *mut c_char) };
@@ -110,6 +117,7 @@ fn call(function: FfiFn, req: Value) -> Result<Value> {
         .with_context(|| format!("designdb 响应解析失败: {}", out_str))?;
 
     let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    println!("[designdb] call 响应 code={}", code);
     if code != 200 && code != 0 {
         let msg = value
             .get("msg")
@@ -133,6 +141,10 @@ pub fn query(
     skip: Option<u64>,
     limit: Option<u64>,
 ) -> Result<Vec<Value>> {
+    println!(
+        "[designdb] query: path={:?}, collection={:?}, skip={:?}, limit={:?}",
+        path, collection, skip, limit
+    );
     let mut req = json!({
         "path": path,
         "collection": collection,
@@ -189,10 +201,16 @@ pub fn query_all(
 
 /// 是否存在匹配文档（最多读 1 条）。
 pub fn exists(path: &str, collection: &str, filter: Option<Value>) -> Result<bool> {
-    Ok(!query(path, collection, filter, None, None, Some(1))?.is_empty())
+    let found = !query(path, collection, filter, None, None, Some(1))?.is_empty();
+    println!("[designdb] exists: {} -> {}", collection, found);
+    Ok(found)
 }
 
 pub fn insert(path: &str, collection: &str, doc: Value) -> Result<()> {
+    println!(
+        "[designdb] insert: path={:?}, collection={:?}",
+        path, collection
+    );
     let req = json!({
         "path": path,
         "collection": collection,
@@ -203,6 +221,10 @@ pub fn insert(path: &str, collection: &str, doc: Value) -> Result<()> {
 }
 
 pub fn update(path: &str, collection: &str, filter: Option<Value>, update: Value) -> Result<()> {
+    println!(
+        "[designdb] update: path={:?}, collection={:?}",
+        path, collection
+    );
     let mut req = json!({
         "path": path,
         "collection": collection,
@@ -216,6 +238,10 @@ pub fn update(path: &str, collection: &str, filter: Option<Value>, update: Value
 }
 
 pub fn delete(path: &str, collection: &str, filter: Option<Value>) -> Result<()> {
+    println!(
+        "[designdb] delete: path={:?}, collection={:?}",
+        path, collection
+    );
     let mut req = json!({
         "path": path,
         "collection": collection,

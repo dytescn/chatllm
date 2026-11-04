@@ -95,9 +95,9 @@ pub extern "C" fn update_dialogue(json_in: *const c_char, json_out: *mut c_char)
 
 /// 创建一条对话。
 ///
-/// FFI-Symbol：`post_message`
+/// FFI-Symbol：`chat`
 /// 入参：`ChatFlow`（`prompt` 必填；`uuid` 非空时续聊已有对话）
-/// 出参：`{ uuid, created, prompt, max_tokens }`
+/// 出参：`{ uuid, created, prompt, max_tokens, route }`
 #[unsafe(no_mangle)]
 pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     let body = match read_body(json_in) {
@@ -109,12 +109,50 @@ pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) ->
         Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
     };
 
+    // check 阶段：配置缺失时直接返回，不创建对话、不写消息。
+    if let Some(message) = crate::utils::check::missing_supplier_reply() {
+        println!("[chat] check 未通过，直接返回设置提示");
+        return write_success(
+            json_out,
+            "success",
+            json!({
+                "uuid": null,
+                "created": false,
+                "prompt": req.prompt,
+                "max_tokens": req.max_tokens,
+                "route": crate::utils::check::SETTING_ROUTE,
+                "content": message,
+                "content_html": "",
+            }),
+        );
+    }
+
+    // think 阶段：命中 chat_think 后取出资源包 uuid/name，用于定位对话与 skills。
+    let (think_plugin_uuid, system_prompt) = {
+        match crate::utils::think::find(&req.prompt, crate::utils::think::TOP_K) {
+            Ok(Some(hit)) => {
+                let system = hit
+                    .plugin_name
+                    .as_deref()
+                    .and_then(crate::utils::think::skills_for);
+                (hit.plugin_uuid, system)
+            }
+            Ok(None) => (None, None),
+            Err(error) => {
+                println!("[chat] think 检索失败: {:#}", error);
+                (None, None)
+            }
+        }
+    };
+    let plugin_uuid = req.plugin_uuid.as_deref().or(think_plugin_uuid.as_deref());
+
     match dialogue::open_chat(
         &req.prompt,
         req.uuid.as_deref(),
-        req.plugin_uuid.as_deref(),
+        plugin_uuid,
         req.title.as_deref(),
         req.show_status,
+        system_prompt.as_deref(),
     ) {
         Ok((uuid, created)) => write_success(
             json_out,
@@ -124,8 +162,43 @@ pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) ->
                 "created": created,
                 "prompt": req.prompt,
                 "max_tokens": req.max_tokens,
+                "route": null,
+                "plugin_uuid": plugin_uuid,
             }),
         ),
         Err(e) => write_error(json_out, e.code(), &e.message()),
     }
+}
+
+/// `chat` 的导出入口。
+///
+/// cyctron 按 `FFI-Symbol: chat` 拼成 `post_chat`，这里作为
+/// [`post_message`] 的别名，保持宿主 / 文档调用一致。
+#[unsafe(no_mangle)]
+pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+    post_message(json_in, json_out)
+}
+
+/// `dialogue_list` 的导出入口。
+#[unsafe(no_mangle)]
+pub extern "C" fn post_dialogue_list(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+    patch_dialogue(json_in, json_out)
+}
+
+/// `dialogue_search` 的导出入口。
+#[unsafe(no_mangle)]
+pub extern "C" fn post_dialogue_search(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+    patch_dialogue(json_in, json_out)
+}
+
+/// `dialogue_update` 的导出入口。
+#[unsafe(no_mangle)]
+pub extern "C" fn post_dialogue_update(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+    update_dialogue(json_in, json_out)
+}
+
+/// `chat_detail` 的导出入口。
+#[unsafe(no_mangle)]
+pub extern "C" fn post_chat_detail(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+    get_dialogue(json_in, json_out)
 }

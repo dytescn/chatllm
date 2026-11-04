@@ -17,8 +17,10 @@ use std::sync::OnceLock;
 /// kv_lib 在 libary/ 下的文件名（由 kv_lib/dytes.json 的 exports 决定）。
 #[cfg(windows)]
 const KV_LIB_PATH: &str = "./libary/kv_lib.dll";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 const KV_LIB_PATH: &str = "./libary/kv_lib.so";
+#[cfg(target_os = "macos")]
+const KV_LIB_PATH: &str = "./libary/kv_lib.dylib";
 
 /// 与 kv_lib 的 `write_json_out` 保持一致。
 const OUT_BUF_SIZE: usize = 65536;
@@ -44,7 +46,7 @@ fn ensure_library() -> Result<&'static Library> {
     let lib = unsafe { Library::new(KV_LIB_PATH) }
         .with_context(|| format!("加载 {} 失败", KV_LIB_PATH))?;
     let _ = KV_LIB.set(lib);
-    eprintln!("[kv_lib] 加载 {} 成功", KV_LIB_PATH);
+    println!("[kv_lib] 加载 {} 成功", KV_LIB_PATH);
     KV_LIB.get().context("kv_lib 库未初始化")
 }
 
@@ -64,6 +66,7 @@ fn check_ret(symbol: &str, ret: c_int) -> Result<()> {
 /// 纯函数，便于单测。业务错误（`code != 200`）转为 `Err`。
 pub fn parse_response(symbol: &str, out: &str) -> Result<Value> {
     if out.trim().is_empty() {
+        println!("[kv] {} 返回空", symbol);
         bail!("kv_lib {} 返回空", symbol);
     }
 
@@ -71,6 +74,7 @@ pub fn parse_response(symbol: &str, out: &str) -> Result<Value> {
         .with_context(|| format!("kv_lib {} 响应解析失败: {}", symbol, out))?;
 
     let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    println!("[kv] {} 响应 code={}", symbol, code);
     if code != 200 {
         let msg = value
             .get("msg")
@@ -84,6 +88,11 @@ pub fn parse_response(symbol: &str, out: &str) -> Result<Value> {
 
 /// 调用任意 `post_kv_<symbol>`，返回响应中的 `data`。
 pub fn call_ffi(symbol: &str, request: &Value) -> Result<Value> {
+    println!(
+        "[kv] call_ffi: symbol={}, request={:?}",
+        symbol,
+        preview(&request.to_string(), 300)
+    );
     let lib = ensure_library()?;
     let name = format!("post_kv_{}", symbol);
     let function: libloading::Symbol<'_, FfiFn> = unsafe {
@@ -236,13 +245,32 @@ pub fn ensure_chat_plugin_collection() -> Result<()> {
 ///
 /// 集合不存在时会先创建；调用方的检索参数与 `search` 一致。
 pub fn search_chat_plugins(query: &str, top_k: i64) -> Result<Vec<Value>> {
+    println!(
+        "[kv] search_chat_plugins: query={:?}, top_k={}",
+        preview(query, 200),
+        top_k
+    );
     ensure_chat_plugin_collection()?;
     let data = search(COLLECTION_CHAT_PLUGIN, query, top_k, 0.0, None, true)?;
-    Ok(data
+    let list = data
         .get("list")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default())
+        .unwrap_or_default();
+    println!("[kv] search_chat_plugins 命中 {} 条", list.len());
+    Ok(list)
+}
+
+fn preview(value: &str, max: usize) -> String {
+    let mut out = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= max {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// `kv_embed`（action=embed）：为已有记录补齐 / 刷新向量。

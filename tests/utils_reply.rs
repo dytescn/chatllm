@@ -29,3 +29,17 @@ fn from_think_falls_back_to_input() {
     let reply = Reply::from_think(None, "输入");
     assert_eq!(reply.content, "我收到你的信息了：输入");
 }
+
+#[test]
+fn from_result_uses_plugin_output() {
+    // plugins 阶段成功后，把插件输出作为上游结果传给 reply。
+    let reply = Reply::from_result(Some("插件输出".to_string()), "输入");
+    assert_eq!(reply.content, "插件输出");
+    assert!(reply.think.is_none());
+}
+
+#[test]
+fn from_result_falls_back_to_input() {
+    let reply = Reply::from_result(None, "输入");
+    assert_eq!(reply.content, "我收到你的信息了：输入");
+}

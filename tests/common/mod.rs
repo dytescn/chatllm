@@ -26,7 +26,10 @@ pub fn db_ready() -> bool {
 }
 
 pub fn skip(reason: &str) {
-    eprintln!("跳过 {}：testenv/libary/database.dll 或 testenv/database/dialogue.db 不存在", reason);
+    eprintln!(
+        "跳过 {}：testenv/libary/database.dll 或 testenv/database/dialogue.db 不存在",
+        reason
+    );
 }
 
 /// 调用一个 FFI 接口，打印请求与响应，返回解析后的响应 JSON。

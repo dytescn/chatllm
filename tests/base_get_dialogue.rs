@@ -25,6 +25,10 @@ fn get_dialogue_after_post_message_returns_conversation() {
     if !common::db_ready() {
         return common::skip("get_dialogue 消息");
     }
+    if chatllm::utils::check::missing_supplier_reply().is_some() {
+        eprintln!("跳过 get_dialogue 消息：testenv 未配置供应商与 AppKey");
+        return;
+    }
 
     let prompt = "get_dialogue 测试";
     let created = common::call(
@@ -32,7 +36,10 @@ fn get_dialogue_after_post_message_returns_conversation() {
         &format!(r#"{{"prompt":"{}","title":"get_dialogue 测试"}}"#, prompt),
     );
     assert_eq!(created["code"], 200);
-    let uuid = created["data"]["uuid"].as_str().expect("应返回 uuid").to_string();
+    let uuid = created["data"]["uuid"]
+        .as_str()
+        .expect("应返回 uuid")
+        .to_string();
 
     let body = format!(r#"{{"uuid":"{}","limit":20}}"#, uuid);
     let res = common::call(get_dialogue, &body);

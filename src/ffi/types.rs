@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 /// 对话元信息（`update_dialogue` 入参）
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Dialogue {
-    /// 对话 id；用于定位要更新的对话
+    /// 对话 id；用于定位要更新的对话。兼容宿主传入 `id`。
+    #[serde(alias = "id")]
     pub uuid: Option<String>,
     /// 插件 UUID：等价于对话 id
     pub plugin_uuid: Option<String>,
