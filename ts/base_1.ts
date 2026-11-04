@@ -4,29 +4,28 @@
 //
 // 前置：testenv 已启动（cyctron 监听 127.0.0.1:44944）。
 // 运行：deno run --allow-net ts/base_1.ts
-// 说明：chat 写入 user 消息后，会检索 chat_plugin 并调用插件，追加 assistant 结果；
-//       响应的 content / content_html 仍为空字符串。
+// 说明：chat 写入 user 消息后按 check → think → plugins → reply 执行；
+//       assistant 内容取决于供应商、think 与插件配置。
 
-import { call, section, assert } from "./client.ts";
+import { call, section, assert, summary } from "./client.ts";
 
 const stamp = Date.now().toString(36);
 const title = `base_1-${stamp}`;
-const keyword = `base_1-${stamp}`;
 
 async function main() {
   // 1. 新建对话
   section("1. chat 新建");
   const created = await call("chat", {
     prompt: "base_1 基线测试",
-    name: title,
-    keyword,
+    title,
   });
   console.log(created);
   assert(created.code === 200, "新建返回 200");
+  if (created.data?.route) {
+    console.log(`AI 供应商未配置，跳过 base_1：${created.data.content ?? created.data.route}`);
+    return;
+  }
   assert(created.data?.created === true, "created 为 true");
-  assert(created.data?.content === "", "content 为空（不调用模型）");
-  assert(created.data?.content_html === "", "content_html 为空（不调用模型）");
-  assert(created.data?.keyword === keyword, "keyword 回显正确");
   const uuid = created.data?.uuid;
   assert(typeof uuid === "string" && uuid.length === 36, "拿到合法 uuid");
   if (!uuid) return;
@@ -51,7 +50,6 @@ async function main() {
   const row = (list.data?.list ?? []).find((r: any) => r.id === uuid);
   assert(!!row, "列表包含本对话");
   assert(row?.title === title, "title 正确");
-  assert(row?.keyword === keyword, "keyword 正确");
   assert(row?.message_count === 4, "message_count = 4（每次 chat 写 user + assistant）");
   assert(row?.last_seq === 4, "last_seq = 4");
 
@@ -60,11 +58,12 @@ async function main() {
   const detail = await call("chat_detail", { uuid, limit: 20 });
   console.log(detail);
   assert(detail.code === 200, "详情返回 200");
-  assert((detail.data?.list ?? []).length === 4, "返回 4 条消息");
-  assert(detail.data?.first_id === 1, "first_id = 1");
-  assert(detail.data?.last_id === 4, "last_id = 4");
-  assert(detail.data?.has_more_before === false, "没有更早消息");
-  const messages = detail.data?.list ?? [];
+  const detailMessages = detail.data?.messages ?? {};
+  assert((detailMessages.list ?? []).length === 4, "返回 4 条消息");
+  assert(detailMessages.first_id === 1, "first_id = 1");
+  assert(detailMessages.last_id === 4, "last_id = 4");
+  assert(detailMessages.has_more_before === false, "没有更早消息");
+  const messages = detailMessages.list ?? [];
   assert(messages[0]?.role === "user", "第 1 条是 user");
   assert(messages[0]?.seq === 1 && messages[0]?.id === 1, "第 1 条 seq/id = 1");
   assert(messages[0]?.content === "base_1 基线测试", "第 1 条内容正确");
@@ -81,9 +80,9 @@ async function main() {
   assert(typeof messages[0]?.content_html === "string", "content_html 是字符串");
   assert(typeof messages[0]?.uuid === "string", "消息 uuid 存在");
 
-  // 5. 搜索（按唯一 keyword 命中）
+  // 5. 搜索（按唯一 title 命中）
   section("5. dialogue_search");
-  const searched = await call("dialogue_search", { keyword, page: 1, page_size: 20 });
+  const searched = await call("dialogue_search", { keyword: title, page: 1, page_size: 20 });
   console.log(searched);
   assert(searched.code === 200, "搜索返回 200");
   assert(searched.data?.total === 1, "total = 1");
@@ -107,8 +106,10 @@ async function main() {
     !(listAfter.data?.list ?? []).some((r: any) => r.id === uuid),
     "列表中不再出现已归档对话",
   );
-  const searchAfter = await call("dialogue_search", { keyword, page: 1, page_size: 20 });
+  const searchAfter = await call("dialogue_search", { keyword: title, page: 1, page_size: 20 });
   assert(searchAfter.data?.total === 0, "搜索结果不再包含已归档对话");
+
+  if (summary() > 0) Deno.exit(1);
 }
 
 main();
