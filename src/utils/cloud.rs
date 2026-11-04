@@ -46,16 +46,26 @@ pub enum Supplier {
 }
 
 impl Supplier {
+    /// 精确解析供应商代码；空值、未知值返回 `None`。
+    ///
+    /// 兼容插件名带 `lib` 前缀的情况（`libdeepseek` / `libsiliconflow_t2t`）。
+    pub fn from_exact_code(code: &str) -> Option<Self> {
+        let code = code.trim();
+        let code = code.strip_prefix("lib").unwrap_or(code);
+        match code {
+            "deepseek" => Some(Supplier::Deepseek),
+            "siliconflow_t2t" => Some(Supplier::SiliconFlow),
+            _ => None,
+        }
+    }
+
     /// `ai_supplier` 为空或未知时回退 `deepseek`。
     pub fn from_code(code: Option<&str>) -> Self {
         let code = code
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_SUPPLIER);
-        match code {
-            "siliconflow_t2t" => Supplier::SiliconFlow,
-            _ => Supplier::Deepseek,
-        }
+        Self::from_exact_code(code).unwrap_or(Supplier::Deepseek)
     }
 
     pub fn code(self) -> &'static str {
@@ -83,7 +93,11 @@ impl Supplier {
 
     /// token 缺失时的错误文案。
     pub fn missing_token_message(self) -> String {
-        format!("AI 配置错误：未配置 {} token：{}", self.code(), self.token_key())
+        format!(
+            "AI 配置错误：未配置 {} token：{}",
+            self.code(),
+            self.token_key()
+        )
     }
 }
 
@@ -106,9 +120,11 @@ pub fn library_candidates(lib_name: &str) -> Vec<PathBuf> {
 
 /// 找到供应商系统库的动态库路径。
 pub fn resolve_library_path(lib_name: &str) -> Option<PathBuf> {
-    library_candidates(lib_name)
+    let path = library_candidates(lib_name)
         .into_iter()
-        .find(|path| path.exists())
+        .find(|path| path.exists());
+    println!("[cloud] resolve_library_path: {:?} -> {:?}", lib_name, path);
+    path
 }
 
 /// 读取 `info.db.setting` 中的配置项；不存在时返回 `None`。
@@ -118,17 +134,26 @@ pub fn setting(key: &str) -> Result<Option<String>> {
         INFO_DB,
         &format!("SELECT value FROM setting WHERE key = '{}' LIMIT 1", key),
     )?;
-    Ok(rows
+    let value = rows
         .first()
         .and_then(|row| row.get("value"))
         .and_then(Value::as_str)
-        .map(str::to_string))
+        .map(str::to_string);
+    println!(
+        "[cloud] setting: key={:?}, found={}, len={}",
+        key,
+        value.is_some(),
+        value.as_deref().map(str::len).unwrap_or(0)
+    );
+    Ok(value)
 }
 
 /// 当前配置的供应商（`ai_supplier`）。
 pub fn current_supplier() -> Result<Supplier> {
     let code = setting("ai_supplier")?;
-    Ok(Supplier::from_code(code.as_deref()))
+    let supplier = Supplier::from_code(code.as_deref());
+    println!("[cloud] current_supplier: {:?}", supplier);
+    Ok(supplier)
 }
 
 /// 读取供应商 token，缺失时返回配置错误。
@@ -136,8 +161,15 @@ pub fn token(supplier: Supplier) -> Result<String> {
     let value = setting(supplier.token_key())?.unwrap_or_default();
     let value = value.trim();
     if value.is_empty() {
+        println!("[cloud] token: supplier={:?}, missing", supplier);
         bail!("{}", supplier.missing_token_message());
     }
+    println!(
+        "[cloud] token: supplier={:?}, key={}, len={}",
+        supplier,
+        supplier.token_key(),
+        value.len()
+    );
     Ok(value.to_string())
 }
 
@@ -145,15 +177,16 @@ pub fn token(supplier: Supplier) -> Result<String> {
 fn library(lib_name: &str) -> Result<Arc<Library>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<Library>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = cache.lock().map_err(|_| anyhow::anyhow!("系统库缓存已损坏"))?;
+    let mut cache = cache
+        .lock()
+        .map_err(|_| anyhow::anyhow!("系统库缓存已损坏"))?;
 
     if let Some(lib) = cache.get(lib_name) {
         return Ok(Arc::clone(lib));
     }
 
-    let path = resolve_library_path(lib_name).with_context(|| {
-        format!("找不到供应商系统库 {}（应放在 ./libary/）", lib_name)
-    })?;
+    let path = resolve_library_path(lib_name)
+        .with_context(|| format!("找不到供应商系统库 {}（应放在 ./libary/）", lib_name))?;
     let lib = unsafe { Library::new(&path) }
         .with_context(|| format!("加载供应商系统库 {} 失败", path.display()))?;
     let lib = Arc::new(lib);
@@ -163,6 +196,12 @@ fn library(lib_name: &str) -> Result<Arc<Library>> {
 
 /// 调用指定供应商的 `post_chat`。
 pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result<CloudReply> {
+    println!(
+        "[cloud] chat_with: supplier={:?}, prompt={:?}, messages={}",
+        supplier,
+        preview(prompt, 200),
+        messages.len()
+    );
     let lib = library(supplier.lib_name())?;
     let function: libloading::Symbol<'_, FfiFn> = unsafe {
         lib.get(ENTRY_SYMBOL).with_context(|| {
@@ -174,7 +213,13 @@ pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result
         })?
     };
 
-    let request = json!({ "prompt": prompt, "messages": messages });
+    // 供应商库要求 messages 非空；没有历史时至少携带当前 user 消息。
+    let request_messages = if messages.is_empty() {
+        vec![json!({ "role": "user", "content": prompt })]
+    } else {
+        messages.to_vec()
+    };
+    let request = json!({ "prompt": prompt, "messages": request_messages });
     let request = CString::new(request.to_string()).context("云端请求 JSON 含 \\0")?;
     let mut out = vec![0u8; OUT_BUF_SIZE];
     let ret = unsafe { function(request.as_ptr(), out.as_mut_ptr() as *mut c_char) };
@@ -188,10 +233,12 @@ pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result
     let out = unsafe { CStr::from_ptr(out.as_ptr() as *const c_char) }
         .to_str()
         .context("云端响应非 UTF-8")?;
-    let value: Value = serde_json::from_str(out)
-        .with_context(|| format!("云端响应解析失败: {}", out))?;
+    println!("[cloud] chat_with 原始响应: {:?}", preview(out, 500));
+    let value: Value =
+        serde_json::from_str(out).with_context(|| format!("云端响应解析失败: {}", out))?;
 
     let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    println!("[cloud] chat_with 响应 code: {}", code);
     if code != 0 && code != 200 {
         let msg = value
             .get("msg")
@@ -208,6 +255,7 @@ pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    println!("[cloud] chat_with content: {:?}", preview(&content, 300));
     Ok(CloudReply {
         content,
         model: data_obj
@@ -227,6 +275,11 @@ pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result
 
 /// 读取 `ai_supplier` 与 token，调用对应供应商。
 pub fn chat(prompt: &str, messages: &[Value]) -> Result<CloudReply> {
+    println!(
+        "[cloud] chat: prompt={:?}, messages={}",
+        preview(prompt, 200),
+        messages.len()
+    );
     let supplier = current_supplier()?;
     token(supplier)?;
     chat_with(supplier, prompt, messages)
@@ -234,9 +287,23 @@ pub fn chat(prompt: &str, messages: &[Value]) -> Result<CloudReply> {
 
 /// 把消息对转成供应商协议需要的 `[{role, content}]`，空内容会被过滤。
 pub fn messages_from(pairs: &[(&str, &str)]) -> Vec<Value> {
-    pairs
+    let messages: Vec<Value> = pairs
         .iter()
         .filter(|(_, content)| !content.trim().is_empty())
         .map(|(role, content)| json!({ "role": role, "content": content }))
-        .collect()
+        .collect();
+    println!("[cloud] messages_from: {} 条", messages.len());
+    messages
+}
+
+fn preview(value: &str, max: usize) -> String {
+    let mut out = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= max {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }

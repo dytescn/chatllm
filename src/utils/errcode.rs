@@ -12,20 +12,24 @@ pub enum ChatError {
 
 impl ChatError {
     pub fn code(&self) -> i32 {
-        match self {
+        let code = match self {
             ChatError::InvalidUuid(_) => 400103,
             ChatError::Create(_) => 400300,
             ChatError::Load(_) => 400303,
             ChatError::Append(_) => 400301,
-        }
+        };
+        println!("[errcode] ChatError::code = {}", code);
+        code
     }
 
     pub fn message(&self) -> String {
-        match self {
+        let message = match self {
             ChatError::InvalidUuid(e) => format!("invalid uuid: {}", e),
             ChatError::Create(e) => format!("create dialogue failed: {}", e),
             ChatError::Load(e) => format!("load dialogue failed: {}", e),
             ChatError::Append(e) => format!("append user message failed: {}", e),
-        }
+        };
+        println!("[errcode] ChatError::message = {}", message);
+        message
     }
 }
