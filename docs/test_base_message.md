@@ -5,13 +5,13 @@
 
 ## 1. 覆盖接口
 
-- `post_message`（FFI-Symbol：`post_message`）：入参 `ChatFlow`（`prompt` 必填，`uuid` 非空时续聊已有对话）。
+- `chat`（FFI-Symbol：`chat`）：入参 `ChatFlow`（`prompt` 必填，`uuid` 非空时续聊已有对话）。
 
 ## 2. 用例
 
 | 用例 | 输入 | 预期 |
 | --- | --- | --- |
-| `post_message_creates_then_continues` | `{"prompt":"你好，介绍一下自己","title":"测试新建"}`，随后 `{"prompt":"继续","uuid":<上一步 uuid>}` | 首次 `created = true` 且 `uuid` 为 36 位；续聊 `created = false` 且 `uuid` 不变；列表中该对话 `message_count = 2`、`last_seq = 2`；测试末尾调用 `utils::dialogue::delete_dialogue` 清理 |
+| `post_message_creates_then_continues` | `{"prompt":"你好，介绍一下自己","title":"测试新建"}`，随后 `{"prompt":"继续","uuid":<上一步 uuid>}` | 首次 `created = true` 且 `uuid` 为 36 位；续聊 `created = false` 且 `uuid` 不变；列表中该对话 `message_count = 4`、`last_seq = 4`；测试末尾调用 `utils::dialogue::delete_dialogue` 清理 |
 | `post_message_rejects_unknown_uuid` | `{"prompt":"x","uuid":"9999…"}` | `code = 400303` |
 | `missing_prompt_returns_400102` | `{"uuid":"x"}` | `code = 400102` |
 

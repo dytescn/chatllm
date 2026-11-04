@@ -2,7 +2,8 @@
 
 ## 1. 对话表 `dialogue`
 
-用途：存储对话的元数据。具体对话内容为 JSON，不在本表存储，后续单独设计内容表或消息表。
+用途：存储对话元数据。消息内容保存在 `designdb/<dialogue_id>` 的
+`messages` 集合中。
 
 ### 1.1 字段定义
 
@@ -15,6 +16,7 @@
 | `is_pinned` | `INTEGER NOT NULL DEFAULT 0` | 是 | 是否置顶：`0` 否，`1` 是 |
 | `is_archived` | `INTEGER NOT NULL DEFAULT 0` | 是 | 是否归档：`0` 否，`1` 是；列表默认排除归档 |
 | `show_status` | `INTEGER NOT NULL DEFAULT 1` | 是 | 显示状态：`1` 正常显示，`2` 不显示（插件对话） |
+| `system_prompt` | `TEXT` | 否 | 对话级 system；例如 think_base skills 内容 |
 | `message_count` | `INTEGER NOT NULL DEFAULT 0` | 是 | 消息条数 |
 | `last_seq` | `INTEGER NOT NULL DEFAULT 0` | 是 | 最后消息序号；默认 `0` 表示无消息 |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` | 是 | 创建时间，文本时间（UTC） |
@@ -46,5 +48,5 @@
 
 ```sql
 WHERE is_archived = 0
-  AND show_status = 1
+  AND show_status != 2
 ORDER BY is_pinned DESC, updated_at DESC

@@ -239,35 +239,34 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
   -d '{"action":"embed","collection":"chat_plugin","limit":100,"force":false}'
 ```
 
-## 6. chat_plugin 在对话流程中的位置
+## 6. chat_think / chat_plugin 在对话流程中的位置
 
 ```text
 用户输入
   │
   ├─ POST /chatllm  chat
   │     1. 写 user 消息
-  │     2. kv_search(collection=chat_plugin, query=用户输入)
-  │     3. 无候选 → assistant：请先安装插件（deepseek / siliconflow）
-  │     4. 有候选 → 调用 Top1 插件（当前为 do_test_chat），携带 prompt + messages
-  │     5. do_test_chat 读取 info.db.ai_supplier：
-  │          - 未配置 → 默认 deepseek
-  │          - token 未配置 → 返回错误，assistant 写入 AI 配置错误
-  │          - token 已配置 → 调用对应供应商插件
-  │              deepseek → libdeepseek.dll
-  │              siliconflow_t2t → libsiliconflow_t2t.dll
-  │     6. 供应商回复写入 assistant 消息
+  │     2. check：读取 ai_supplier 与对应 AppKey
+  │          供应商缺失 / AppKey 缺失 → assistant：请选择设置AI供应商并配置 AppKey + route=/setting
+  │     3. think：kv_search(collection=chat_think, query=用户输入)
+  │          按 "|" 拆分为数组
+  │     4. plugins：逐段 kv_search(collection=chat_plugin, query=片段)
+  │          命中 → 调用 Top1 插件
+  │          供应商类插件（deepseek / siliconflow_t2t）→ cloud::chat_with
+  │          未命中 → 跳过该段
+  │     5. reply：合并插件结果 → 检索 plugins_reply → 插件调用 cloud → assistant 最终内容
   │
   └─ chat_detail 读取 user + assistant
 ```
 
-- 插件检索失败不阻断 `chat`：assistant 写入 `chat 插件检索失败：<原因>`；
-- Top1 插件不可调用时回退为候选列表文本；
-- 插件调用失败时把插件错误消息写入 assistant（例如
-  `AI 配置错误：未配置 deepseek token：deepseek_app_key`）。
+- think 未命中或分割后没有有效段时，跳过插件，直接把用户 prompt 交给 reply；
+- plugins 失败时，把错误文本作为结果交给 reply；
+- 供应商类插件由 `src/utils/cloud.rs` 统一调用
+  `libdeepseek.dll` / `libsiliconflow_t2t.dll`；
+- `ai_supplier` 或 AppKey 缺失时，check 阶段直接返回设置提示，不进入后续流程。
 
-完整可执行流程见 `runflow/base.md` 与 `runflow/base.ts`；实测
-`ai_supplier` 为空时默认 deepseek 并报 token 缺失，`siliconflow_t2t`
-配置完整时返回真实模型回复。
+完整可执行流程见 `runflow/base.md`；think 命中后把 `|` 拆分出的数组逐段查询插件，
+合并结果交给 reply。
 
 ## 7. 模型与存储
 
@@ -308,7 +307,7 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
 cargo test kv
 
 # 端到端：启动 testenv 后执行基础流程
-cd testenv && ./cyctron.exe start
-deno run --allow-net runflow/base.ts
-cd testenv && ./cyctron.exe stop
+(cd testenv && ./cyctron.exe start)
+deno run --allow-net ts/test_pipeline.ts
+(cd testenv && ./cyctron.exe stop)
 ```

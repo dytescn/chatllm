@@ -1,82 +1,105 @@
 # chatllm
 
-本地对话存储能力库。Rust `cdylib`，导出 C ABI 的 `post_*` 函数，
-由 cyctron 以 `POST /chatllm` + `FFI-Symbol` 加载。运行时 cwd 是 Piksel 安装根目录，
-`./libary`、`./database`、`./designdb` 都相对该目录解析。
+`chatllm` 是一个以 Rust 编写、编译为动态库的对话存储与编排模块。它导出 C ABI
+`post_*` 函数，由宿主（Piksel / cyctron）通过 `POST /chatllm` + `FFI-Symbol`
+调用。运行时 cwd 为安装根目录，`./libary`、`./database`、`./designdb`、
+`./plugins` 均相对该目录解析。
 
-当前版本：**1.0.8**（`Cargo.toml` 与 `dytes.json` 一致）。
+版本以 `Cargo.toml` 为准；发布清单见 `dytes.json`。
 
-## 能力
+## 功能
+
+- 新建 / 续聊对话，保存 user 与 assistant 消息；
+- 对话列表、搜索、更新、详情与游标分页；
+- 对话前置检查：确认 AI 供应商与 AppKey 已配置；
+- `check → think → plugins → reply` 对话编排；
+- 消息 Markdown 渲染为 `content_html`。
+
+供应商调用统一由 `cloud.rs` 处理：`reply` 命中供应商插件时直接调用
+`libdeepseek` / `libsiliconflow_t2t`，其他插件按插件协议执行。
+
+## 对话流程
+
+```text
+chat
+  │
+  ├─ check：读取 info.db.setting
+  │    缺少 ai_supplier 或对应 AppKey
+  │      → 不创建对话，直接返回 content + route="/setting"
+  │
+  ├─ think：检索 chat_think，按 "|" 拆分
+  │
+  ├─ plugins：逐段检索 chat_plugin 并执行插件
+  │    未命中 / 无有效段 → 跳过 plugins
+  │
+  └─ reply：检索 plugins_reply，命中插件调用 cloud；未命中回退 reply_base
+```
+
+供应商检查成功后会缓存 `info.db` 的修改时间与大小；`info.db` 变化时缓存自动失效。
+
+## FFI
+
+所有接口统一返回 `{code, data, msg}`，成功 `code = 200`。结果写入调用方提供的
+64 KiB 缓冲区。
 
 | FFI-Symbol | 导出函数 | 说明 |
 | --- | --- | --- |
-| `chat` | `post_chat` | 新建 / 续聊，写 user 消息；检索 `chat_plugin`，有插件时调用 Top1 并写回 assistant；不直接调用模型 |
-| `dialogue_list` | `post_dialogue_list` | 对话分页列表（排除归档与 `show_status = 2`） |
-| `dialogue_update` | `post_dialogue_update` | 更新标题、关键字、模型、提示词、模型参数、置顶 / 归档等 |
-| `dialogue_search` | `post_dialogue_search` | 按 `title` / `keyword` 分页搜索 |
-| `chat_detail` | `post_chat_detail` | 读取某对话消息，支持 `before_id` / `after_id` 游标分页 |
+| `chat` | `post_chat` | 新建 / 续聊，执行对话流程并写回 assistant |
+| `dialogue_list` | `post_dialogue_list` | 对话分页列表 |
+| `dialogue_update` | `post_dialogue_update` | 更新标题、显示状态、置顶 / 归档 |
+| `dialogue_search` | `post_dialogue_search` | 按标题 / keyword 搜索 |
+| `chat_detail` | `post_chat_detail` | 读取对话与消息，支持游标分页 |
 
-所有接口统一返回 `{code, data, msg}`，成功 `code = 200`；结果写入调用方提供的 64 KiB 缓冲区。
-
-> `embed_prompts` / `turbo_search_query`、siliconflow 模型调用、skills 注入与向量能力均已移除。
+接口细节见 [`docs/ffi.md`](docs/ffi.md)。
 
 ## 存储
 
 | 数据 | 位置 |
 | --- | --- |
 | 对话索引 | `database/dialogue.db` → `dialogue` |
-| 对话消息 | `designdb/<dialogue_id>` → `messages`（PoloDB 逻辑库，按对话 UUID 分库） |
+| 对话消息 | `designdb/<dialogue_id>` → `messages` |
+| 设置 | `database/info.db` → `setting` |
 
 ## 外部依赖
 
 | 依赖 | 用途 |
 | --- | --- |
-| `./libary/database.dll`（`.so`） | SQLite 访问：`dialogue.db` |
-| `./libary/libdesigndb.dll`（`.so`） | 每对话消息库（PoloDB） |
-| `./libary/info_lib.dll`（`.so`） | `info.db` 的 `setting` / `router` 配置访问 |
-| `./libary/kv_lib.dll`（`.so`） | 插件能力 / 提示词向量检索：`src/utils/kv.rs` |
-| `./libary/plugin_lib.dll`（`.so`） | 设计插件 / 能力清单（依赖声明，当前未接入） |
-| `./libary/libdeepseek.dll`（`.so`） | DeepSeek 供应商插件：`do_test_chat` 按 `ai_supplier` 调用 |
-| `./libary/libsiliconflow_t2t.dll`（`.so`） | SiliconFlow 供应商插件：`do_test_chat` 按 `ai_supplier` 调用 |
-| `./libary/parse.dll`（`.so`） | 读取消息时生成 `content_html` |
+| `database` | SQLite 访问 |
+| `libdesigndb` | 按对话 UUID 存储消息 |
+| `kv_lib` | `chat_think` / `chat_plugin` 检索 |
+| `parse` | Markdown → HTML |
+| `libdeepseek` | DeepSeek 供应商 |
+| `libsiliconflow_t2t` | SiliconFlow 供应商 |
+| `info_lib` | 设置页 / 配置读写 |
+| `plugin_lib` | 插件能力清单 |
 
-> `dytes.json` 的 `dependencies-sys` 声明 `database` / `deepseek` / `designdb` /
-> `info_lib` / `kv_lib` / `markparse` / `plugin_lib` / `siliconflow_t2t`。
-> `info_lib`、`plugin_lib` 当前仅作依赖声明；`kv_lib` 由 `src/utils/kv.rs` 直接加载；
-> 两个供应商插件由 `do_test_chat` 按 `ai_supplier` 调用。
+依赖声明见 `dytes.json` 的 `dependencies-sys`。
 
-## 构建与发布
+## 构建与测试
 
 ```bash
 cargo build --release
+cargo test
 ```
 
-产物：`target/release/chatllm.dll`（Linux `libchatllm.so`、macOS `libchatllm.dylib`）。
-`.github/workflows/` 在 `main` 分支推送时三平台构建并上传到
-`system/chatllm/<version>/<platform>/`。
+产物：`target/release/chatllm.dll`（Linux `libchatllm.so`、macOS
+`libchatllm.dylib`）。
 
 ## 文档
 
-- `README.md`：能力、存储、依赖与构建入口；
-- `todo/README.md`：目录结构、核心调用链与模块说明；
-- `todo/TODO.md`：唯一的开发待办入口；
-- `todo/optimization-tasks.md`：历史优化清单；
-- `docs/facts.md`：1.0.6 代码事实清单；
-- `docs/ffi.md`：FFI 接口说明；
-- `docs/kv_lib.md`：kv_lib 调用方式与 `src/utils/kv.rs` 封装；
-- `docs/db.md`：`dialogue.db` 与 designdb 对话存储；
-- `docs/analyze.md`：运行流程分析（历史分析，检索章节已过时）；
-- `docs/contract.md`：接口契约 v1（候选冻结）。
-
-外部总库 `dytes_sys_operations/sysinfo/sys/chatllm/` 保留架构与接口文档；
-若与仓库内文档冲突，以仓库内文档为准并在开发完成后回填总库。
+- [`docs/ffi.md`](docs/ffi.md)：FFI 接口与错误码
+- [`docs/db.md`](docs/db.md)：对话存储结构
+- [`docs/kv_lib.md`](docs/kv_lib.md)：kv_lib 调用方式
+- [`docs/testenv.md`](docs/testenv.md)：本地测试环境
+- [`runflow/base.md`](runflow/base.md)：基础对话流程
+- [`runflow/think.md`](runflow/think.md)：think_base / reply_base 资源包流程
+- [`runflow/plugins.md`](runflow/plugins.md)：插件检索与执行
+- [`runflow/reply.md`](runflow/reply.md)：plugins_reply 与最终回复
+- [`todo/TODO.md`](todo/TODO.md)：路线图与待办
 
 ## 已知限制
 
-- 错误码散落在各 FFI 文件，尚未集中定义；
-- 输出缓冲区固定 64 KiB，超长结果会被截断（`write_json_out` 返回 `-2`）；
-- 外部库路径写死为 `./libary/*`，未做配置化；
-- 时间戳格式不统一：`dialogue` 用文本时间，`messages` 用 Unix 毫秒；
-- `Cargo.lock` 未入库，构建不完全可复现。
-
-处理清单见 `todo/TODO.md`。
+- 外部库路径固定为 `./libary/*`，暂未配置化；
+- 输出缓冲区固定 64 KiB，超长结果会被拒绝（`-2`）；
+- `dialogue` 使用文本时间，`messages` 使用 Unix 毫秒；
+- 错误码仍分散在各模块。

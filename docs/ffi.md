@@ -1,14 +1,10 @@
 # chatllm FFI 接口
 
-> 快照：chatllm **1.0.8**。对话与消息持久化；`chat` 会调用 `kv_lib` 检索
-> `chat_plugin`，有插件时调用 Top1 并把回复写入 assistant。
-> chatllm 不直接调用模型、不注入 skills。
-> 数据设计见 `db.md`，kv 调用见 `kv_lib.md`。
+`chatllm` 编译为 `cdylib`，由宿主通过 `POST /chatllm` + `FFI-Symbol` 调用。
+对话流程为 `check → think → plugins → reply`；数据存储见
+[`db.md`](db.md)，向量检索见 [`kv_lib.md`](kv_lib.md)。
 
 ## 1. 调用约定
-
-chatllm 编译为 `cdylib`（Windows `chatllm.dll`、Linux `libchatllm.so`、macOS `libchatllm.dylib`），
-由宿主以 **`POST /chatllm` + `FFI-Symbol`** 调用。
 
 ```c
 int (*)(const char *json_in, char *json_out);
@@ -16,138 +12,162 @@ int (*)(const char *json_in, char *json_out);
 
 | 约定 | 说明 |
 | --- | --- |
-| 输入 | NUL 结尾的 UTF-8 JSON；`json_in = NULL` 返回 `400100`，非 UTF-8 返回 `400101`；`dialogue_list` / `dialogue_search` 允许空 body |
-| 输出 | 调用方提供 65,536 字节缓冲区（含结尾 NUL）；超限不写入并返回 `-2` |
-| 返回值 | `0` 已写入；`-1` 输出指针为空；`-2` 缓冲区不足；业务失败仍返回 `0`，看响应体 `code` |
-| 响应包络 | `{"code":200,"data":{...},"msg":"success"}`；失败为 `{"code":<错误码>,"data":{},"msg":"<原因>"}` |
-| 分页 | 对话列表 `page_size` 1–100；消息 `limit` 1–100 |
+| 输入 | NUL 结尾的 UTF-8 JSON；`json_in = NULL` 返回 `400100`，非 UTF-8 返回 `400101` |
+| 输出 | 调用方提供 65,536 字节缓冲区（含结尾 NUL）；超限返回 `-2` |
+| 返回值 | `0` 已写入；`-1` 输出指针为空；`-2` 缓冲区不足；业务失败仍返回 `0`，查看响应 `code` |
+| 响应 | `{"code":200,"data":{...},"msg":"success"}`；失败为 `{"code":<错误码>,"data":{},"msg":"<原因>"}` |
 
-## 2. 接口总表
+## 2. 接口
 
-| FFI-Symbol | 导出函数 | 分类 | 说明 |
-| --- | --- | --- | --- |
-| `chat` | `post_chat` | 对话 | 新建 / 续聊，写 user 消息；检索 `chat_plugin` 并写 assistant 结果 |
-| `dialogue_list` | `post_dialogue_list` | 对话 | 对话分页列表（排除归档与 `show_status = 2`） |
-| `dialogue_update` | `post_dialogue_update` | 对话 | 更新对话字段 |
-| `dialogue_search` | `post_dialogue_search` | 对话 | 按 `title` / `keyword` 分页搜索 |
-| `chat_detail` | `post_chat_detail` | 对话 | 读取某对话消息，`before_id` / `after_id` 游标分页 |
+| FFI-Symbol | 导出函数 | 说明 |
+| --- | --- | --- |
+| `chat` | `post_chat` | 新建 / 续聊并执行对话流程 |
+| `dialogue_list` | `post_dialogue_list` | 对话分页列表 |
+| `dialogue_update` | `post_dialogue_update` | 更新对话字段 |
+| `dialogue_search` | `post_dialogue_search` | 按标题 / keyword 搜索 |
+| `chat_detail` | `post_chat_detail` | 读取对话与消息 |
 
-## 3. 对话接口
+### 2.1 `chat` → `post_chat`
 
-### 3.1 `chat` → `post_chat`
-
-当前流程：校验 / 解析目标对话 → 可选写入 `system_prompt` → 写 user 消息 →
-调用 `kv_lib` 检索 `chat_plugin` → 把结果作为 assistant 消息写回 → 返回对话信息。
-**不调用 siliconflow、不注入 skills；`content` / `content_html` 仍为空字符串。**
-
-**插件检索与调用（assistant 消息）**
-
-- 使用同一段 `prompt` 作为 query，`collection = chat_plugin`，`top_k = 5`；
-- **无候选**：assistant 写入
-  `未找到可用的聊天插件，请先安装插件：deepseek 或 siliconflow。`；
-- **有候选**：取 Top1，按记录 `value` 中的 `lib_name` / `ffi_symbol` 调用插件
-  （`./plugins/<lib_name>/<lib_name>.dll` 或 `./libary/*.dll`），请求携带
-  `prompt` 与当前对话 `messages`；把插件返回的 `content` 写入 assistant；
-- **AI 配置**：插件读取 `info.db.ai_supplier`，未配置时默认 `deepseek`；
-  对应 token（`deepseek_app_key` / `silicon_app_key`）未配置时返回错误，
-  assistant 写入例如 `AI 配置错误：未配置 deepseek token：deepseek_app_key`；
-- 插件不可调用时回退为候选列表文本：
-
-  ```text
-  找到 N 个匹配的 chat 插件：
-  1. <name>（score 0.xxxx）
-     lib_name: <lib_name>, ffi_symbol: <ffi_symbol>
-  ```
-
-- 插件调用失败时把插件的错误消息写入 assistant；检索失败写入
-  `chat 插件检索失败：<原因>`，均不阻断 user 消息落库；
-- 结果同时通过 `chat_detail` 的 `content_html` 渲染。
-
-**请求 `ChatReq`**
+请求：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `prompt` | string | 是 | 用户消息；写入 `messages` |
-| `uuid` | string | 否 | 续聊已有对话；必须是 36 字符合法 UUID，否则 `400103` |
-| `dialogue_id` | string | 否 | 新建时指定 `dialogue.id`；默认 `show_status = 1` |
-| `plugin_uuid` | string | 否 | 插件对话：等价指定 `dialogue.id`；默认 `show_status = 2` |
-| `show_status` | number | 否 | 新建对话的显示状态：`1` 正常、`2` 不显示 |
-| `name` | string | 否 | 新建对话标题；缺省为 `插件对话 <plugin_uuid>` 或 prompt 前 20 个字符 |
-| `keyword` | string | 否 | 新建时写入；续聊时更新该对话的 `keyword` |
-| `max_tokens` | number | 否 | 仅原样回显，不参与任何调用 |
-| `system_prompt` | string | 否 | 显式 system prompt；新建时写入，续聊时覆盖保存 |
+| `prompt` | string | 是 | 用户消息 |
+| `uuid` | string | 否 | 续聊已有对话 |
+| `plugin_uuid` | string | 否 | 新建时作为对话 `id`，默认 `show_status = 2` |
+| `show_status` | number | 否 | `1` 正常显示，`2` 不显示 |
+| `title` | string | 否 | 对话标题；缺省取 `prompt` 前 20 字符 |
+| `max_tokens` | number | 否 | 原样回显，不参与对话逻辑 |
 
-**目标对话解析优先级**：`uuid` 续聊 > `plugin_uuid` > `dialogue_id` > 自动生成。
+目标对话优先级：`uuid` > `plugin_uuid` > 自动生成。
 
-**成功响应 `data`**
+流程：
+
+1. `check`：读取 `info.db.setting.ai_supplier` 与对应 AppKey；
+2. `think`：检索 `chat_think`，取 Top1 的 `value`，按 `|` 拆分；
+3. `plugins`：逐段检索 `chat_plugin` 并执行 Top1 插件；
+4. `reply`：用合并结果检索 `plugins_reply`，调用命中插件生成回复；未命中回退 `reply_base`。
+
+供应商或 AppKey 缺失时，`check` 直接返回，不创建对话、不写消息：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "uuid": null,
+    "created": false,
+    "content": "请选择设置AI供应商并配置 AppKey：[前往设置](/setting)",
+    "content_html": "",
+    "route": "/setting"
+  },
+  "msg": "success"
+}
+```
+
+正常响应：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `uuid` | string | 对话 id |
 | `created` | boolean | 是否新建 |
-| `prompt` | string | 请求 `prompt` 回显 |
-| `content` | string | 固定为空字符串；模型生成已移除 |
-| `content_html` | string | 固定为空字符串；模型生成已移除 |
-| `max_tokens` | number \| null | 请求值回显 |
-| `keyword` | string \| null | 请求值回显 |
-| `session_id` | string \| null | `dialogue.session_id`，由宿主 / 其他服务维护 |
-| `system_prompt` | string \| null | 当前对话的 system prompt |
+| `prompt` | string | 请求回显 |
+| `max_tokens` | number \| null | 请求回显 |
+| `route` | null | 正常流程为 `null` |
+| `plugin_uuid` | string \| null | think 命中的资源包 uuid |
 
-> 响应中不再返回 `skills` / `truncated`。
+`check` 成功后会缓存 `info.db` 的修改时间与大小；文件变化后缓存自动失效。
 
-**主要错误码**：`400100` / `400101` / `400102` / `400103` / `400300` / `400301` /
-`400303` / `400305`。
+### 2.2 `dialogue_list` → `post_dialogue_list`
 
-### 3.2 `dialogue_list` → `post_dialogue_list`
+请求可省略 body：
 
-请求（可省略 body）：`{page?, page_size?}`，默认 1 / 20，`page_size` clamp 到 1–100。
-过滤 `is_archived = 0 AND show_status != 2`，排序 `is_pinned DESC, updated_at DESC`。
-响应：`{list, page, page_size, total}`。
+```json
+{ "page": 1, "page_size": 20 }
+```
 
-### 3.3 `dialogue_update` → `post_dialogue_update`
+`page_size` 范围 1–100。过滤 `is_archived = 0 AND show_status != 2`，按
+`is_pinned DESC, updated_at DESC` 排序。响应：
 
-请求：`{id, title?, keyword?, model_name?, system_prompt?, model_config?, is_pinned?, is_archived?, session_id?, show_status?}`。
-只更新出现的字段，并刷新 `updated_at`。响应：`{id}`。
+```json
+{ "list": [], "page": 1, "page_size": 20, "total": 0 }
+```
 
-### 3.4 `dialogue_search` → `post_dialogue_search`
+### 2.3 `dialogue_update` → `post_dialogue_update`
 
-请求（可省略 body）：`{keyword?, page?, page_size?}`；在 `title`、`keyword` 中不区分大小写匹配。
-响应结构与 `dialogue_list` 一致。
+请求：
 
-### 3.5 `chat_detail` → `post_chat_detail`
+```json
+{
+  "uuid": "<dialogue-id>",
+  "title": "新标题",
+  "show_status": 1,
+  "is_pinned": 0,
+  "is_archived": 0
+}
+```
 
-请求：`{uuid, before_id?, after_id?, limit?}`；`before_id` / `after_id` 二选一，
-都不传时返回最新 `limit` 条。响应：`{list, limit, first_id, last_id, has_more_before, has_more_after}`。
-每条消息额外返回 `content_html`（由 parse.dll 即时生成）。
+`uuid` 也兼容 `id`。只更新出现的字段，并刷新 `updated_at`。响应：`{ "id": "<uuid>" }`。
 
-## 4. 错误码总表
+### 2.4 `dialogue_search` → `post_dialogue_search`
 
-| 码 | 含义 | 出现接口 |
-| --- | --- | --- |
-| `400100` | `json_in` 为空 | 全部 |
-| `400101` | 请求非 UTF-8 | 全部 |
-| `400102` | 请求 JSON 非法 | `chat` |
-| `400103` | uuid 非法 | `chat`、`dialogue_update` |
-| `400104` | `dialogue_update` JSON 非法或缺少 `id` | `dialogue_update` |
-| `400105` | `dialogue_search` JSON 非法 | `dialogue_search` |
-| `400106` | `dialogue_list` JSON 非法 | `dialogue_list` |
-| `400107` | `chat_detail` JSON 非法 | `chat_detail` |
-| `400300` | 创建对话失败 | `chat` |
-| `400301` | 追加 user 消息失败 | `chat` |
-| `400302` | 对话列表失败 | `dialogue_list` |
-| `400303` | 读取 / 更新对话失败 | `chat`、`dialogue_update` |
-| `400304` | 对话搜索失败 | `dialogue_search` |
-| `400305` | 更新 keyword 失败 | `chat` |
-| `400306` | 读取消息详情失败（含 uuid 非法） | `chat_detail` |
+请求可省略 body：
 
-## 5. 相关文件
+```json
+{ "keyword": "标题", "page": 1, "page_size": 20 }
+```
+
+按 `title` / `keyword` 不区分大小写匹配，响应结构与 `dialogue_list` 一致。
+
+### 2.5 `chat_detail` → `post_chat_detail`
+
+请求：
+
+```json
+{ "uuid": "<dialogue-id>", "before_id": null, "after_id": null, "limit": 20 }
+```
+
+`before_id` / `after_id` 二选一；都不传时返回最新 `limit` 条。响应：
+
+```json
+{
+  "dialogue": { "...": "对话字段" },
+  "messages": {
+    "list": [],
+    "limit": 20,
+    "first_id": null,
+    "last_id": null,
+    "has_more_before": false,
+    "has_more_after": false
+  }
+}
+```
+
+每条消息附带 `content_html`（由 `parse` 即时渲染）。
+
+## 3. 错误码
+
+| 码 | 含义 |
+| --- | --- |
+| `400100` | `json_in` 为空 |
+| `400101` | 请求非 UTF-8 |
+| `400102` | 请求 JSON 非法 |
+| `400103` | uuid 非法 |
+| `400300` | 创建对话失败 |
+| `400301` | 追加 user 消息失败 |
+| `400302` | 对话列表失败 |
+| `400303` | 读取 / 更新对话失败 |
+
+## 4. 相关文件
 
 | 文件 | 内容 |
 | --- | --- |
-| `src/ffi/chat.rs` | 对话类 FFI 入口 |
-| `src/ffi/run.rs` | `chat` 的对话选择与消息写入流程 |
+| `src/ffi/chat.rs` | FFI 入口 |
 | `src/ffi/types.rs` | 请求结构 |
-| `src/utils/cjson.rs` | 响应包络与缓冲区写入 |
-| `src/utils/dialogue.rs` | 对话与消息存储、分页与游标 |
-| `src/utils/markparse.rs` | 消息 `content_html` 生成 |
-| `ts/client.ts`、`ts/test_*.ts` | 宿主调用与手工测试脚本 |
+| `src/utils/cjson.rs` | 响应包络与缓冲区 |
+| `src/utils/check.rs` | 供应商配置检查 |
+| `src/utils/think.rs` | `chat_think` 检索与分段 |
+| `src/utils/plugins.rs` | `chat_plugin` 检索与插件调用 |
+| `src/utils/reply.rs` | 结果回复 |
+| `src/utils/reply_base.rs` | reply_base 资源包读取与清洗 |
+| `src/utils/markparse.rs` | `content_html` 渲染 |
