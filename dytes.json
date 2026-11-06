@@ -27,18 +27,18 @@
   "platform-exports": {
     "windows": {
       "./target/release/chatllm.dll": "chatllm.dll",
-      "./setup.ts": "setup.ts"
+      "./setup.json": "setup.json"
     },
     "linux": {
       "./target/release/libchatllm.so": "chatllm.so",
-      "./setup.ts": "setup.ts"
+      "./setup.json": "setup.json"
     },
     "macos": {
       "./target/release/libchatllm.dylib": "chatllm.dylib",
-      "./setup.ts": "setup.ts"
+      "./setup.json": "setup.json"
     }
   },
   "init": [
-    "./setup.ts"
+    "./setup.json"
   ]
 }
