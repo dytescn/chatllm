@@ -8,15 +8,15 @@
 | 路径 | 用途 |
 | --- | --- |
 | `testenv/cyctron.exe` | 本地宿主，提供 `http://127.0.0.1:44944` 的 HTTP/FFI 路由 |
-| `testenv/setup.ts` | 建库脚本，与仓库根 `setup.ts` 一致，只创建 `dialogue` 表 |
-| `testenv/seed.ts` | 基础数据脚本，插入 4 条固定 UUID 的对话（不在 `setup.ts` 中生成） |
+| `testenv/setup.ts` | 本地建库脚本（创建 `dialogue` 表）；正式安装使用仓库根 `setup.json` |
+| `testenv/seed.ts` | 基础数据脚本，插入 4 条固定 UUID 的对话（不在建表脚本中生成） |
 | `testenv/clear_db.ts` | 清空 `dialogue` 库：删除所有用户表（含表结构） |
 | `testenv/database/dialogue.db` | SQLite 数据库文件（库名 `./dialogue`） |
 | `testenv/libary/*.dll` | `database.dll`、`libdesigndb.dll` 等宿主依赖库 |
 
 ## 2. 前置条件
 
-- Windows 环境，`testenv/libary/database.dll`、`libdesigndb.dll` 已就位；
+- Windows 环境，`testenv/libary/database.dll`、`libdesigndb.dll`、`cloud_lib.dll` 已就位；
 - 数据库库名固定为 `./dialogue`，由 `database.dll` 解析为 `./database/dialogue.db`；
 - 脚本以 Deno 约定编写（`deno run --allow-net xxx.ts`），也可用 Node 24 直接运行（脚本不含类型注解）。
 
@@ -61,5 +61,5 @@ deno run --allow-net seed.ts
 ## 5. 注意事项
 
 - `clear_db.ts` 会删除库中**所有用户表**（包括与 chatllm 无关的 `prompts`、`embedding_*`），执行前确认该库可重置。
-- 当前 `dialogue` 表只有 `docs/db.md` 的 11 个列；Rust 侧不再自动建表或补列，建表统一由 `setup.ts` 负责。
+- 当前 `dialogue` 表有 12 个列；Rust 侧不再自动建表或补列，正式初始化用 `setup.json`，本地 testenv 可用 `setup.ts`。
 - 每次重置环境后需重新执行 `setup.ts` 与 `seed.ts`，否则依赖基础数据的测试会失败。

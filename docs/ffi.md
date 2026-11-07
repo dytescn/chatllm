@@ -4,6 +4,8 @@
 对话流程为 `check → think → plugins → reply`；数据存储见
 [`db.md`](db.md)，向量检索见 [`kv_lib.md`](kv_lib.md)。
 
+> 当前版本 **1.0.11**。供应商调用统一走 `cloud_lib`；对话表由 `setup.json` 初始化。
+
 ## 1. 调用约定
 
 ```c
@@ -21,10 +23,10 @@ int (*)(const char *json_in, char *json_out);
 
 | FFI-Symbol | 导出函数 | 说明 |
 | --- | --- | --- |
-| `chat` | `post_chat` | 新建 / 续聊并执行对话流程 |
+| `chat` | `post_chat` | 新建 / 续聊并执行对话流程，写 user 与 assistant |
 | `dialogue_list` | `post_dialogue_list` | 对话分页列表 |
 | `dialogue_update` | `post_dialogue_update` | 更新对话字段 |
-| `dialogue_search` | `post_dialogue_search` | 按标题 / keyword 搜索 |
+| `dialogue_search` | `post_dialogue_search` | 按标题搜索 |
 | `chat_detail` | `post_chat_detail` | 读取对话与消息 |
 
 ### 2.1 `chat` → `post_chat`
@@ -77,16 +79,17 @@ int (*)(const char *json_in, char *json_out);
 | `plugin_uuid` | string \| null | think 命中的资源包 uuid |
 
 `check` 成功后会缓存 `info.db` 的修改时间与大小；文件变化后缓存自动失效。
+供应商插件（`deepseek` / `siliconflow_t2t`）由 `cloud_lib` 调用，chatllm 不直接加载供应商动态库。
 
 ### 2.2 `dialogue_list` → `post_dialogue_list`
 
 请求可省略 body：
 
 ```json
-{ "page": 1, "page_size": 20 }
+{ "keyword": "标题", "page": 1, "page_size": 20 }
 ```
 
-`page_size` 范围 1–100。过滤 `is_archived = 0 AND show_status != 2`，按
+`keyword` 非空时按标题搜索（等价 `dialogue_search`）；`page_size` 范围 1–100。过滤 `is_archived = 0 AND show_status != 2`，按
 `is_pinned DESC, updated_at DESC` 排序。响应：
 
 ```json
@@ -117,7 +120,7 @@ int (*)(const char *json_in, char *json_out);
 { "keyword": "标题", "page": 1, "page_size": 20 }
 ```
 
-按 `title` / `keyword` 不区分大小写匹配，响应结构与 `dialogue_list` 一致。
+按 `title` 不区分大小写匹配；`keyword` 为空时退化为普通列表。响应结构与 `dialogue_list` 一致。
 
 ### 2.5 `chat_detail` → `post_chat_detail`
 

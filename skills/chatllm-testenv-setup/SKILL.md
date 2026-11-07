@@ -26,7 +26,7 @@ netstat -ano | grep 44944
 ```text
 testenv/
   cyctron.exe
-  setup.ts          # 建 dialogue 表
+  setup.ts          # 本地建 dialogue 表（等价仓库根 setup.json）
   seed.ts           # 插入基础对话
   clear_db.ts       # 清空 dialogue 库
   libary/           # 动态库
@@ -48,11 +48,18 @@ testenv/
 | `libdesigndb.dll` | 对话消息库 |
 | `kv_lib.dll` | `chat_plugin` 检索 |
 | `parse.dll` | `content_html` 生成 |
-| `libdeepseek.dll` | DeepSeek 供应商 |
-| `libsiliconflow_t2t.dll` | SiliconFlow 供应商 |
+| `cloud_lib.dll` | DeepSeek / SiliconFlow 云端调用 |
 | `do_test_chat.dll` | 测试聊天插件 |
 | `reply_sys_info.dll` | 回复组装插件 |
 | `info_lib.dll` | `info.db` 的 `setting` / `router` 读写 |
+
+`cloud_lib.dll` 从同级仓库构建：
+
+```bash
+cd ../cloud_lib
+cargo build --release
+cp target/release/cloud_lib.dll ../chatllm/testenv/libary/cloud_lib.dll
+```
 
 `info_lib.dll` 通常不在 testenv 自带库中，需要从同级仓库构建：
 

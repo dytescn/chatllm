@@ -72,7 +72,8 @@ chat
 | `info_lib` | 设置页 / 配置读写 |
 | `plugin_lib` | 插件能力清单 |
 
-依赖声明见 `dytes.json` 的 `dependencies-sys`。
+依赖声明见 `dytes.json` 的 `dependencies-sys`。初始化文件为 `setup.json`（创建
+`dialogue` 表）；本地 `testenv/` 仍保留 `setup.ts` 作为测试重置脚本。
 
 ## 构建与测试
 

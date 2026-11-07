@@ -43,13 +43,12 @@ cargo test
 
 | 依赖 | 版本 | 用途 |
 | --- | --- | --- |
-| `database` | 1.0.2 | SQLite：`dialogue.db`、`info.db` |
-| `designdb` | 1.0.0 | 每个对话 UUID 一个消息库 |
-| `deepseek` | 1.0.0 | DeepSeek 供应商 |
-| `siliconflow_t2t` | 1.0.0 | SiliconFlow 供应商 |
-| `info_lib` | 0.1.0 | `info.db.setting` / `router` 读写 |
-| `kv_lib` | 0.1.0 | `chat_plugin` 等向量检索 |
-| `markparse` | 1.0.0 | Markdown → `content_html` |
+| `database` | 1.0.3 | SQLite：`dialogue.db`、`info.db` |
+| `designdb` | 1.0.1 | 每个对话 UUID 一个消息库 |
+| `cloud_lib` | 1.0.0 | DeepSeek / SiliconFlow 云端调用 |
+| `info_lib` | 0.1.2 | `info.db.setting` / `router` 读写 |
+| `kv_lib` | 0.1.2 | `chat_plugin` 等向量检索 |
+| `markparse` | 1.0.1 | Markdown → `content_html` |
 | `plugin_lib` | 1.0.8 | 插件能力清单（当前仅声明） |
 
 ## 4. testenv 运行环境
@@ -65,7 +64,7 @@ cd testenv
 
 | 目录 | 内容 |
 | --- | --- |
-| `testenv/libary/` | `database.dll`、`libdesigndb.dll`、`kv_lib.dll`、`parse.dll`、`do_test_chat.dll`、`reply_sys_info.dll`、`libdeepseek.dll`、`libsiliconflow_t2t.dll` |
+| `testenv/libary/` | `database.dll`、`libdesigndb.dll`、`kv_lib.dll`、`parse.dll`、`cloud_lib.dll`、`do_test_chat.dll`、`reply_sys_info.dll` |
 | `testenv/database/` | `dialogue.db`、`kv*.db`；`info.db` 可能由 `database.dll` 自动创建为空库 |
 | `testenv/designdb/` | 按对话 UUID 分库的消息数据 |
 | `testenv/plugins/` | `do_test_chat/`、`reply_sys_info/` |
