@@ -1,14 +1,15 @@
 // src/utils/cloud.rs
-//! 云端模型调用。
+//! 云端模型调用客户端。
 //!
-//! 供应商选择来自 `info.db` 的 `setting` 表：
-//! - `ai_supplier`：`deepseek`（默认）/ `siliconflow_t2t`；
-//! - 对应 token：`deepseek_app_key` / `silicon_app_key`。
+//! 供应商选择、DeepSeek / SiliconFlow 的 HTTP 调用都已迁移到独立的
+//! `cloud` 系统库（`./libary/libcloud`）。chatllm 只负责：
+//! - 读取 `info.db.setting` 做对话前置检查；
+//! - 把 `supplier + prompt + messages` 交给 `libcloud` 的 `post_chat`。
 //!
-//! 供应商（`deepseek` / `siliconflow_t2t`）属于 `dytes.json` 的 `dependencies-sys` 系统库，
-//! 不再通过插件目录调用：直接从 `./libary/` 加载动态库并调 `post_chat`。
+//! 这样 chatllm 不再直接加载供应商库，避免插件回调与 chatllm 互相加载。
+//!
 //! 协议：
-//! 请求 `{"prompt": "...", "messages": [{"role": "...", "content": "..."}]}`，
+//! 请求 `{"supplier": "...", "prompt": "...", "messages": [...]}`，
 //! 响应 `{"code":0,"data":{"content":"...","id":"...","model":"...","usage":{...}}}`。
 
 use crate::utils::db::db_query;
@@ -23,12 +24,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// `info.db` 的逻辑库名。
 const INFO_DB: &str = "info";
-/// 系统库输出缓冲区，与 `write_json_out` 约定一致。
+/// 云端系统库输出缓冲区，与 `post_chat` 约定一致。
 const OUT_BUF_SIZE: usize = 65536;
 /// 未配置 `ai_supplier` 时使用的供应商。
 const DEFAULT_SUPPLIER: &str = "deepseek";
-/// 供应商系统库的调用符号。
+/// 云端系统库调用符号。
 const ENTRY_SYMBOL: &[u8] = b"post_chat";
+/// 云端系统库名（位于 `./libary/`）。
+const CLOUD_LIB_NAME: &str = "libcloud";
 #[cfg(windows)]
 const DYLIB_EXT: &str = "dll";
 #[cfg(target_os = "linux")]
@@ -75,12 +78,9 @@ impl Supplier {
         }
     }
 
-    /// 供应商系统库名（位于 `./libary/`）。
+    /// 两家供应商都已合并到同一个 `libcloud`。
     pub fn lib_name(self) -> &'static str {
-        match self {
-            Supplier::Deepseek => "libdeepseek",
-            Supplier::SiliconFlow => "libsiliconflow_t2t",
-        }
+        CLOUD_LIB_NAME
     }
 
     /// `info.db.setting` 中保存 token 的 key。
@@ -110,15 +110,16 @@ pub struct CloudReply {
     pub usage: Value,
 }
 
-/// 供应商系统库候选路径：只查 `./libary/`，不再走插件目录。
+/// 云端系统库候选路径：只查 `./libary/`。
 pub fn library_candidates(lib_name: &str) -> Vec<PathBuf> {
+    let plain = lib_name.strip_prefix("lib").unwrap_or(lib_name);
     vec![
-        PathBuf::from(format!("./libary/{0}.{1}", lib_name, DYLIB_EXT)),
-        PathBuf::from(format!("./libary/lib{0}.{1}", lib_name, DYLIB_EXT)),
+        PathBuf::from(format!("./libary/{}.{}", lib_name, DYLIB_EXT)),
+        PathBuf::from(format!("./libary/{}.{}", plain, DYLIB_EXT)),
     ]
 }
 
-/// 找到供应商系统库的动态库路径。
+/// 找到云端系统库的动态库路径。
 pub fn resolve_library_path(lib_name: &str) -> Option<PathBuf> {
     let path = library_candidates(lib_name)
         .into_iter()
@@ -173,7 +174,7 @@ pub fn token(supplier: Supplier) -> Result<String> {
     Ok(value.to_string())
 }
 
-/// 已加载的系统库缓存，避免每次调用重复 `dlopen`。
+/// 已加载的云端系统库缓存，避免每次调用重复 `dlopen`。
 fn library(lib_name: &str) -> Result<Arc<Library>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<Library>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -186,15 +187,15 @@ fn library(lib_name: &str) -> Result<Arc<Library>> {
     }
 
     let path = resolve_library_path(lib_name)
-        .with_context(|| format!("找不到供应商系统库 {}（应放在 ./libary/）", lib_name))?;
+        .with_context(|| format!("找不到云端系统库 {}（应放在 ./libary/）", lib_name))?;
     let lib = unsafe { Library::new(&path) }
-        .with_context(|| format!("加载供应商系统库 {} 失败", path.display()))?;
+        .with_context(|| format!("加载云端系统库 {} 失败", path.display()))?;
     let lib = Arc::new(lib);
     cache.insert(lib_name.to_string(), Arc::clone(&lib));
     Ok(lib)
 }
 
-/// 调用指定供应商的 `post_chat`。
+/// 调用 `libcloud` 的 `post_chat`。
 pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result<CloudReply> {
     println!(
         "[cloud] chat_with: supplier={:?}, prompt={:?}, messages={}",
@@ -206,25 +207,29 @@ pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result
     let function: libloading::Symbol<'_, FfiFn> = unsafe {
         lib.get(ENTRY_SYMBOL).with_context(|| {
             format!(
-                "供应商系统库 {} 缺少符号 {}",
+                "云端系统库 {} 缺少符号 {}",
                 supplier.lib_name(),
                 String::from_utf8_lossy(ENTRY_SYMBOL)
             )
         })?
     };
 
-    // 供应商库要求 messages 非空；没有历史时至少携带当前 user 消息。
+    // 云端库要求 messages 非空；没有历史时至少携带当前 user 消息。
     let request_messages = if messages.is_empty() {
         vec![json!({ "role": "user", "content": prompt })]
     } else {
         messages.to_vec()
     };
-    let request = json!({ "prompt": prompt, "messages": request_messages });
+    let request = json!({
+        "supplier": supplier.code(),
+        "prompt": prompt,
+        "messages": request_messages,
+    });
     let request = CString::new(request.to_string()).context("云端请求 JSON 含 \\0")?;
     let mut out = vec![0u8; OUT_BUF_SIZE];
     let ret = unsafe { function(request.as_ptr(), out.as_mut_ptr() as *mut c_char) };
     if ret == -1 {
-        bail!("供应商系统库 {} 输出指针为空", supplier.lib_name());
+        bail!("云端系统库 {} 输出指针为空", supplier.lib_name());
     }
     if ret == -2 {
         bail!("云端响应超过 64 KiB");
@@ -273,7 +278,7 @@ pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result
     })
 }
 
-/// 读取 `ai_supplier` 与 token，调用对应供应商。
+/// 读取 `ai_supplier` 与 token，再调用 cloud。
 pub fn chat(prompt: &str, messages: &[Value]) -> Result<CloudReply> {
     println!(
         "[cloud] chat: prompt={:?}, messages={}",
@@ -285,7 +290,7 @@ pub fn chat(prompt: &str, messages: &[Value]) -> Result<CloudReply> {
     chat_with(supplier, prompt, messages)
 }
 
-/// 把消息对转成供应商协议需要的 `[{role, content}]`，空内容会被过滤。
+/// 把消息对转成 `[{role, content}]`，空内容会被过滤。
 pub fn messages_from(pairs: &[(&str, &str)]) -> Vec<Value> {
     let messages: Vec<Value> = pairs
         .iter()

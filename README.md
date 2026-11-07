@@ -15,8 +15,8 @@
 - `check → think → plugins → reply` 对话编排；
 - 消息 Markdown 渲染为 `content_html`。
 
-供应商调用统一由 `cloud.rs` 处理：`reply` 命中供应商插件时直接调用
-`libdeepseek` / `libsiliconflow_t2t`，其他插件按插件协议执行。
+供应商调用统一由 `cloud.rs` 处理：`reply` 命中供应商插件时调用独立的
+`libcloud` 系统库（内部再分发 DeepSeek / SiliconFlow），其他插件按插件协议执行。
 
 ## 对话流程
 
@@ -68,8 +68,7 @@ chat
 | `libdesigndb` | 按对话 UUID 存储消息 |
 | `kv_lib` | `chat_think` / `chat_plugin` 检索 |
 | `parse` | Markdown → HTML |
-| `libdeepseek` | DeepSeek 供应商 |
-| `libsiliconflow_t2t` | SiliconFlow 供应商 |
+| `libcloud` | DeepSeek / SiliconFlow 云端调用（独立 `cloud` 包） |
 | `info_lib` | 设置页 / 配置读写 |
 | `plugin_lib` | 插件能力清单 |
 

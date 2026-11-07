@@ -39,7 +39,7 @@ reply：合并插件结果，检索 plugins_reply；命中插件调用 cloud，�
 - think 按整段数组处理，不是只取最后一段；
 - plugins 每段独立执行，结果以空行合并；
 - 供应商类插件（`deepseek` / `siliconflow_t2t`，可带 `lib` 前缀）统一走
-  `cloud::chat_with`；
+  `cloud::chat_with`，由独立系统库 `libcloud` 调用；
 - 插件或供应商错误只影响 assistant 内容，不阻断消息存储。
 
 ## 配置
