@@ -1,7 +1,7 @@
 // src/utils/dialogue.rs
 //! 对话索引（SQLite `dialogue.db` 的 `dialogue` 表）。
 //!
-//! 表结构以 `docs/db.md` 为准，由 `setup.ts` 创建；本模块不再建表或补列。
+//! 表结构以 `docs/db.md` 为准，由 `setup.json` 创建；本模块不再建表或补列。
 //! 消息操作见 `utils::message`，业务错误码见 `utils::errcode`。
 
 use crate::utils::db::{db_execute, db_query, db_update};
