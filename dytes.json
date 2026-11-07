@@ -18,7 +18,7 @@
     "kv_lib": "0.1.2",
     "markparse": "1.0.1",
     "plugin_lib": "1.0.8",
-    "cloud": "1.0.0"
+    "cloud_lib": "1.0.0"
   },
   "dependencies-web": {
     "chat_ui": "1.0.12"

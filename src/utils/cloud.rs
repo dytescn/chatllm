@@ -2,9 +2,9 @@
 //! 云端模型调用客户端。
 //!
 //! 供应商选择、DeepSeek / SiliconFlow 的 HTTP 调用都已迁移到独立的
-//! `cloud` 系统库（`./libary/libcloud`）。chatllm 只负责：
+//! `cloud_lib` 系统库（`./libary/cloud_lib`）。chatllm 只负责：
 //! - 读取 `info.db.setting` 做对话前置检查；
-//! - 把 `supplier + prompt + messages` 交给 `libcloud` 的 `post_chat`。
+//! - 把 `supplier + prompt + messages` 交给 `cloud_lib` 的 `post_chat`。
 //!
 //! 这样 chatllm 不再直接加载供应商库，避免插件回调与 chatllm 互相加载。
 //!
@@ -31,7 +31,7 @@ const DEFAULT_SUPPLIER: &str = "deepseek";
 /// 云端系统库调用符号。
 const ENTRY_SYMBOL: &[u8] = b"post_chat";
 /// 云端系统库名（位于 `./libary/`）。
-const CLOUD_LIB_NAME: &str = "libcloud";
+const CLOUD_LIB_NAME: &str = "cloud_lib";
 #[cfg(windows)]
 const DYLIB_EXT: &str = "dll";
 #[cfg(target_os = "linux")]
@@ -78,7 +78,7 @@ impl Supplier {
         }
     }
 
-    /// 两家供应商都已合并到同一个 `libcloud`。
+    /// 两家供应商都已合并到同一个 `cloud_lib`。
     pub fn lib_name(self) -> &'static str {
         CLOUD_LIB_NAME
     }
@@ -112,10 +112,10 @@ pub struct CloudReply {
 
 /// 云端系统库候选路径：只查 `./libary/`。
 pub fn library_candidates(lib_name: &str) -> Vec<PathBuf> {
-    let plain = lib_name.strip_prefix("lib").unwrap_or(lib_name);
+    let base = lib_name.strip_prefix("lib").unwrap_or(lib_name);
     vec![
-        PathBuf::from(format!("./libary/{}.{}", lib_name, DYLIB_EXT)),
-        PathBuf::from(format!("./libary/{}.{}", plain, DYLIB_EXT)),
+        PathBuf::from(format!("./libary/{}.{}", base, DYLIB_EXT)),
+        PathBuf::from(format!("./libary/lib{}.{}", base, DYLIB_EXT)),
     ]
 }
 
@@ -195,7 +195,7 @@ fn library(lib_name: &str) -> Result<Arc<Library>> {
     Ok(lib)
 }
 
-/// 调用 `libcloud` 的 `post_chat`。
+/// 调用 `cloud_lib` 的 `post_chat`。
 pub fn chat_with(supplier: Supplier, prompt: &str, messages: &[Value]) -> Result<CloudReply> {
     println!(
         "[cloud] chat_with: supplier={:?}, prompt={:?}, messages={}",

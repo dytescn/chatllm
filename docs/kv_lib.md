@@ -261,7 +261,7 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
 
 - think 未命中或分割后没有有效段时，跳过插件，直接把用户 prompt 交给 reply；
 - plugins 失败时，把错误文本作为结果交给 reply；
-- 供应商类插件由 `src/utils/cloud.rs` 统一调用独立系统库 `libcloud`；
+- 供应商类插件由 `src/utils/cloud.rs` 统一调用独立系统库 `cloud_lib`；
 - `ai_supplier` 或 AppKey 缺失时，check 阶段直接返回设置提示，不进入后续流程。
 
 完整可执行流程见 `runflow/base.md`；think 命中后把 `|` 拆分出的数组逐段查询插件，

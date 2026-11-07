@@ -43,10 +43,10 @@ fn supplier_exact_code_rejects_unknown() {
 #[test]
 fn supplier_metadata() {
     assert_eq!(Supplier::Deepseek.code(), "deepseek");
-    assert_eq!(Supplier::Deepseek.lib_name(), "libcloud");
+    assert_eq!(Supplier::Deepseek.lib_name(), "cloud_lib");
     assert_eq!(Supplier::Deepseek.token_key(), "deepseek_app_key");
     assert_eq!(Supplier::SiliconFlow.code(), "siliconflow_t2t");
-    assert_eq!(Supplier::SiliconFlow.lib_name(), "libcloud");
+    assert_eq!(Supplier::SiliconFlow.lib_name(), "cloud_lib");
     assert_eq!(Supplier::SiliconFlow.token_key(), "silicon_app_key");
     assert_eq!(
         Supplier::Deepseek.missing_token_message(),
@@ -56,7 +56,7 @@ fn supplier_metadata() {
 
 #[test]
 fn library_candidates_only_use_libary() {
-    let paths = cloud::library_candidates("libcloud");
+    let paths = cloud::library_candidates("cloud_lib");
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().all(|p| p.starts_with("./libary/")));
     assert!(paths.iter().all(|p| p.to_string_lossy().contains("cloud")));
@@ -74,8 +74,8 @@ fn resolves_supplier_library_in_testenv() {
         return common::skip("cloud 系统库路径");
     }
 
-    let Some(path) = cloud::resolve_library_path("libcloud") else {
-        return common::skip("libcloud 系统库");
+    let Some(path) = cloud::resolve_library_path("cloud_lib") else {
+        return common::skip("cloud_lib 系统库");
     };
     assert!(path.exists());
 }
