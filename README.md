@@ -32,7 +32,7 @@ chat
   ├─ plugins：逐段检索 chat_plugin 并执行插件
   │    未命中 / 无有效段 → 跳过 plugins
   │
-  └─ reply：检索 plugins_reply，命中插件调用 cloud；未命中回退 reply_base
+  └─ reply：检索 chat_reply，命中插件调用 cloud；未命中回退 reply_base
 ```
 
 供应商检查成功后会缓存 `info.db` 的修改时间与大小；`info.db` 变化时缓存自动失效。
@@ -94,7 +94,7 @@ cargo test
 - [`runflow/base.md`](runflow/base.md)：基础对话流程
 - [`runflow/think.md`](runflow/think.md)：think_base / reply_base 资源包流程
 - [`runflow/plugins.md`](runflow/plugins.md)：插件检索与执行
-- [`runflow/reply.md`](runflow/reply.md)：plugins_reply 与最终回复
+- [`runflow/reply.md`](runflow/reply.md)：chat_reply 与最终回复
 - [`todo/TODO.md`](todo/TODO.md)：路线图与待办
 
 ## 已知限制

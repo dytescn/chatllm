@@ -4,7 +4,7 @@
 对话流程为 `check → think → plugins → reply`；数据存储见
 [`db.md`](db.md)，向量检索见 [`kv_lib.md`](kv_lib.md)。
 
-> 当前版本 **1.0.11**。供应商调用统一走 `cloud_lib`；对话表由 `setup.json` 初始化。
+> 当前版本 **1.0.12**。供应商调用统一走 `cloud_lib`；对话表由 `setup.json` 初始化。
 
 ## 1. 调用约定
 
@@ -49,7 +49,7 @@ int (*)(const char *json_in, char *json_out);
 1. `check`：读取 `info.db.setting.ai_supplier` 与对应 AppKey；
 2. `think`：检索 `chat_think`，取 Top1 的 `value`，按 `|` 拆分；
 3. `plugins`：逐段检索 `chat_plugin` 并执行 Top1 插件；
-4. `reply`：用合并结果检索 `plugins_reply`，调用命中插件生成回复；未命中回退 `reply_base`。
+4. `reply`：用合并结果检索 `chat_reply`，调用命中插件生成回复；未命中回退 `reply_base`。
 
 供应商或 AppKey 缺失时，`check` 直接返回，不创建对话、不写消息：
 

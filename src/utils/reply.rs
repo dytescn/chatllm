@@ -1,7 +1,7 @@
 // src/utils/reply.rs
 //! 助手回复组装。
 //!
-//! reply 阶段接收 plugins 结果，优先检索 `plugins_reply`，按命中的插件调用
+//! reply 阶段接收 plugins 结果，优先检索 `chat_reply`，按命中的插件调用
 //! 供应商（cloud）或业务插件；对话 id 使用命中记录的 `plugins_uid`，不存在时创建。
 //! 未命中或调用失败时回退到 reply_base 清洗。
 
@@ -18,7 +18,7 @@ use crate::utils::reply_base;
 use crate::utils::think;
 
 /// reply 插件检索集合。
-pub const REPLY_COLLECTION: &str = "plugins_reply";
+pub const REPLY_COLLECTION: &str = "chat_reply";
 /// 检索返回条数。
 pub const TOP_K: i64 = 5;
 
@@ -45,7 +45,7 @@ pub struct Reply {
     pub think: Option<String>,
     /// 正文的 HTML 版本。
     pub html: String,
-    /// 是否由 `plugins_reply` 命中插件生成。
+    /// 是否由 `chat_reply` 命中插件生成。
     pub used_reply_plugin: bool,
 }
 
@@ -70,7 +70,7 @@ impl Reply {
 
     /// 使用 plugins 结果生成回复。
     ///
-    /// 先尝试 `plugins_reply`；未命中或失败时使用 reply_base 清洗。
+    /// 先尝试 `chat_reply`；未命中或失败时使用 reply_base 清洗。
     pub fn from_result(result: Option<String>, input: &str) -> Self {
         println!(
             "[reply] from_result 输入: prompt={:?}, result={:?}",
@@ -102,7 +102,7 @@ impl Reply {
     }
 }
 
-/// 检索 `plugins_reply`，取 Top1。
+/// 检索 `chat_reply`，取 Top1。
 pub fn find(input: &str, top_k: i64) -> Result<Option<ReplyHit>> {
     println!(
         "[reply] find 输入: query={:?}, collection={}, top_k={}",
@@ -116,7 +116,7 @@ pub fn find(input: &str, top_k: i64) -> Result<Option<ReplyHit>> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    println!("[reply] plugins_reply 返回 {} 条", list.len());
+    println!("[reply] chat_reply 返回 {} 条", list.len());
     for (index, hit) in list.iter().enumerate() {
         println!(
             "[reply] hit[{}] key={:?}, value={:?}, meta={}",
@@ -181,11 +181,11 @@ fn reply_with_plugin(input: &str) -> Option<Reply> {
     let hit = match find(input, TOP_K) {
         Ok(Some(hit)) => hit,
         Ok(None) => {
-            println!("[reply] plugins_reply 未命中");
+            println!("[reply] chat_reply 未命中");
             return None;
         }
         Err(error) => {
-            println!("[reply] plugins_reply 检索失败: {:#}", error);
+            println!("[reply] chat_reply 检索失败: {:#}", error);
             return None;
         }
     };
@@ -305,7 +305,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_plugins_reply_from_meta() {
+    fn parses_chat_reply_from_meta() {
         let hit = json!({
             "key": "reply-base",
             "meta": {
@@ -326,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_plugins_reply_from_value() {
+    fn parses_chat_reply_from_value() {
         let hit = json!({
             "key": "reply-value",
             "value": "{\"lib_name\":\"siliconflow_t2t\",\"plugin_uuid\":\"6f2b8d41-9c3a-4e7b-8d5f-1a2c3e4b5d60\",\"plugin_name\":\"reply_base\"}"
@@ -338,7 +338,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_plugins_reply_without_plugin() {
+    fn rejects_chat_reply_without_plugin() {
         assert!(parse_hit(&json!({ "key": "empty" })).is_none());
+    }
+
+    #[test]
+    fn reply_collection_is_chat_reply() {
+        assert_eq!(REPLY_COLLECTION, "chat_reply");
     }
 }

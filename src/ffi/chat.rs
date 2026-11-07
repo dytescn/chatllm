@@ -144,12 +144,16 @@ pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) ->
             }
         }
     };
-    let plugin_uuid = req.plugin_uuid.as_deref().or(think_plugin_uuid.as_deref());
+    // 只有调用方显式传入的 plugin_uuid 才能作为对话 id；think 命中的 uuid
+    // 只用于标识插件 / 读取 skills，不能复用为对话 id，否则命中同一插件的
+    // 多个对话会互相覆盖。
+    let dialogue_plugin_uuid = req.plugin_uuid.as_deref();
+    let response_plugin_uuid = req.plugin_uuid.as_deref().or(think_plugin_uuid.as_deref());
 
     match dialogue::open_chat(
         &req.prompt,
         req.uuid.as_deref(),
-        plugin_uuid,
+        dialogue_plugin_uuid,
         req.title.as_deref(),
         req.show_status,
         system_prompt.as_deref(),
@@ -163,7 +167,7 @@ pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) ->
                 "prompt": req.prompt,
                 "max_tokens": req.max_tokens,
                 "route": null,
-                "plugin_uuid": plugin_uuid,
+                "plugin_uuid": response_plugin_uuid,
             }),
         ),
         Err(e) => write_error(json_out, e.code(), &e.message()),

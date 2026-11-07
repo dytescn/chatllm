@@ -1,7 +1,7 @@
 {
   "name": "chatllm",
   "uuid": "69b786e9-19d9-4fe0-b868-048726e1e5b8",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "system for ai chat",
   "keywords": [
     "chat",
@@ -15,9 +15,9 @@
     "database": "1.0.3",
     "designdb": "1.0.1",
     "info_lib": "0.1.2",
-    "kv_lib": "0.1.2",
+    "kv_lib": "0.1.3",
     "markparse": "1.0.1",
-    "plugin_lib": "1.0.8",
+    "plugin_lib": "1.0.12",
     "cloud_lib": "1.0.0"
   },
   "dependencies-web": {

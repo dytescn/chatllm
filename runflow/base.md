@@ -26,7 +26,7 @@ plugins：逐段检索 chat_plugin 并调用 Top1 插件
         ├─ 单段失败 → 该段结果为错误文本
         │
         ▼
-reply：合并插件结果，检索 plugins_reply；命中插件调用 cloud，未命中回退 reply_base
+reply：合并插件结果，检索 chat_reply；命中插件调用 cloud，未命中回退 reply_base
         │
         ▼
 写入 assistant，返回 uuid / created

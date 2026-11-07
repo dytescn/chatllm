@@ -8,7 +8,7 @@
 //! - kv：`utils::kv` → `./libary/kv_lib.dll`
 //! - 插件：`designplugin_lib` 安装到 `./plugins/<name>/`，这里按该约定 dlopen。
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use libloading::Library;
 use serde_json::{json, Value};
 use std::ffi::{CStr, CString};
@@ -223,8 +223,29 @@ pub fn call_plugin(plugin: &str, symbol: &str, input: &str) -> Result<String> {
         .with_context(|| format!("加载插件 {} 失败", path.display()))?;
     let entry = format!("post_{}", symbol);
     let function: libloading::Symbol<'_, FfiFn> = unsafe {
-        lib.get(entry.as_bytes())
-            .with_context(|| format!("dlsym {} 失败（{}）", entry, path.display()))?
+        match lib.get::<FfiFn>(entry.as_bytes()) {
+            Ok(function) => function,
+            Err(first) if symbol != "chat" => {
+                // 兼容旧 scan 记录：ffi_symbol 可能是 mcp tool 名，而插件实际入口是 post_chat。
+                println!("[plugins] dlsym {} 失败，回退 post_chat: {}", entry, first);
+                lib.get::<FfiFn>(b"post_chat").with_context(|| {
+                    format!(
+                        "dlsym {} / post_chat 失败（{}）: {}",
+                        entry,
+                        path.display(),
+                        first
+                    )
+                })?
+            }
+            Err(first) => {
+                return Err(anyhow!(
+                    "dlsym {} 失败（{}）: {}",
+                    entry,
+                    path.display(),
+                    first
+                ))
+            }
+        }
     };
 
     let request = json!({ "prompt": input }).to_string();

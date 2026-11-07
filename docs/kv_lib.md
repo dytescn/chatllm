@@ -254,7 +254,7 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
   │          命中 → 调用 Top1 插件
   │          供应商类插件（deepseek / siliconflow_t2t）→ cloud::chat_with → cloud_lib
   │          未命中 → 跳过该段
-  │     5. reply：合并插件结果 → 检索 plugins_reply → 插件调用 cloud → assistant 最终内容
+  │     5. reply：合并插件结果 → 检索 chat_reply → 插件调用 cloud → assistant 最终内容
   │
   └─ chat_detail 读取 user + assistant
 ```

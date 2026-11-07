@@ -50,7 +50,7 @@ plugins/<package>/<package>.json
 | `value` | 按 `|` 拆分为 plugins 查询数组 |
 
 `reply_base` 只在 reply 回退时直接读取安装目录；正常 reply 会先检索
-`plugins_reply`，命中插件后走 cloud 或业务插件。
+`chat_reply`，命中插件后走 cloud 或业务插件。
 
 ## 流程
 
@@ -66,7 +66,7 @@ chat
   │
   ├─ plugins：每段检索 chat_plugin 并执行
   │
-  └─ reply：合并结果，检索 plugins_reply
+  └─ reply：合并结果，检索 chat_reply
        ├─ 命中插件：按 plugins_uid 查 / 建对话，调用 cloud 或业务插件
        ├─ 未命中 / 失败：回退 reply_base 清洗
        └─ assistant = 最终内容
@@ -104,12 +104,12 @@ deno run --allow-net --allow-read ts/test_full_flow.ts
 - 首次请求创建 think_base 系统对话，`system_prompt` 等于 `think_base.md`；
 - `问候|系统信息` 拆成两段，分别调用 `do_test_chat`；
 - 插件结果以空行合并，交给 reply；
-- reply 检索 `plugins_reply`，命中插件调用 cloud；未命中回退 reply_base；
+- reply 检索 `chat_reply`，命中插件调用 cloud；未命中回退 reply_base；
 - assistant 为最终内容。
 
 ## 边界
 
 - 当前 `system_prompt` 只写入 `dialogue`，尚未传给供应商请求；
 - think_base 的 `chat_think` 记录由安装 / 测试脚本写入；reply_base 只在
-  回退时直接读取安装目录，正常 reply 查询 `plugins_reply`；
+  回退时直接读取安装目录，正常 reply 查询 `chat_reply`；
 - think / reply 未命中资源包时跳过对应阶段。
