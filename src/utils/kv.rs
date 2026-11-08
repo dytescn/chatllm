@@ -201,7 +201,7 @@ pub fn search_chat(query: &str, top_k: i64) -> Result<Value> {
 /// 每条候选至少包含 `key` / `score`；`with_value=true` 时还带出
 /// `value`（插件元数据 JSON）与 `meta`。
 pub fn search_plugins(query: &str, top_k: i64) -> Result<Vec<Value>> {
-    let data = search(COLLECTION_PLUGIN, query, top_k, 0.0, None, true)?;
+    let data = search(COLLECTION_PLUGIN, query, top_k, match_min_score(), None, true)?;
     Ok(data
         .get("list")
         .and_then(Value::as_array)
@@ -251,7 +251,14 @@ pub fn search_chat_plugins(query: &str, top_k: i64) -> Result<Vec<Value>> {
         top_k
     );
     ensure_chat_plugin_collection()?;
-    let data = search(COLLECTION_CHAT_PLUGIN, query, top_k, 0.0, None, true)?;
+    let data = search(
+        COLLECTION_CHAT_PLUGIN,
+        query,
+        top_k,
+        match_min_score(),
+        None,
+        true,
+    )?;
     let list = data
         .get("list")
         .and_then(Value::as_array)
@@ -300,4 +307,39 @@ pub fn stats(collection: Option<&str>) -> Result<Value> {
         "collection",
         &json!({ "action": "stats", "collection": collection }),
     )
+}
+
+
+/// 默认相关度阈值；低于该分数的检索结果不视为命中。
+pub const DEFAULT_MATCH_MIN_SCORE: f64 = 0.35;
+/// `info.db.setting` 中覆盖阈值的键。
+pub const MATCH_MIN_SCORE_KEY: &str = "ai_match_min_score";
+
+fn parse_match_min_score(value: Option<&str>) -> f64 {
+    value
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| *value >= 0.0)
+        .unwrap_or(DEFAULT_MATCH_MIN_SCORE)
+}
+
+/// think / plugin / reply 检索使用的相关度阈值。
+pub fn match_min_score() -> f64 {
+    let value = crate::utils::cloud::setting(MATCH_MIN_SCORE_KEY)
+        .ok()
+        .flatten();
+    parse_match_min_score(value.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_min_score_uses_default_and_override() {
+        assert_eq!(parse_match_min_score(None), DEFAULT_MATCH_MIN_SCORE);
+        assert_eq!(parse_match_min_score(Some("")), DEFAULT_MATCH_MIN_SCORE);
+        assert_eq!(parse_match_min_score(Some("0.5")), 0.5);
+        assert_eq!(parse_match_min_score(Some("-1")), DEFAULT_MATCH_MIN_SCORE);
+        assert_eq!(parse_match_min_score(Some("bad")), DEFAULT_MATCH_MIN_SCORE);
+    }
 }

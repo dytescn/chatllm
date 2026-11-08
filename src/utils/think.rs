@@ -47,7 +47,7 @@ pub fn find(input: &str, top_k: i64) -> anyhow::Result<Option<ThinkHit>> {
         preview(input, 200),
         top_k
     );
-    let data = match kv::search(COLLECTION, input, top_k, 0.0, None, true) {
+    let data = match kv::search(COLLECTION, input, top_k, kv::match_min_score(), None, true) {
         Ok(data) => data,
         Err(error) => {
             println!("[think] kv 查询失败: {:#}", error);

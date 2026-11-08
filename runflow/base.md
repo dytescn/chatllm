@@ -51,6 +51,7 @@ reply：合并插件结果，检索 chat_reply；命中插件调用 cloud，未�
 | `ai_supplier` | `deepseek` / `siliconflow_t2t` |
 | `deepseek_app_key` / `deepseek_app_base_url` / `deepseek_app_model` | DeepSeek 配置 |
 | `silicon_app_key` / `silicon_app_base_url` / `silicon_app_model` | SiliconFlow 配置 |
+| `ai_match_min_score` | think / plugin / reply 检索阈值；默认 `0.35`，低于阈值视为未命中 |
 
 `chat_think`：think 检索源，命中记录的 `value` 可包含 `|` 分段。
 `chat_plugin`：插件检索源，记录需包含 `lib_name` / `ffi_symbol`。

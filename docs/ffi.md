@@ -4,7 +4,7 @@
 对话流程为 `check → think → plugins → reply`；数据存储见
 [`db.md`](db.md)，向量检索见 [`kv_lib.md`](kv_lib.md)。
 
-> 当前版本 **1.0.12**。供应商调用统一走 `cloud_lib`；对话表由 `setup.json` 初始化。
+> 当前版本 **1.0.13**。供应商调用统一走 `cloud_lib`；对话表由 `setup.json` 初始化。
 
 ## 1. 调用约定
 
@@ -80,6 +80,10 @@ int (*)(const char *json_in, char *json_out);
 
 `check` 成功后会缓存 `info.db` 的修改时间与大小；文件变化后缓存自动失效。
 供应商插件（`deepseek` / `siliconflow_t2t`）由 `cloud_lib` 调用，chatllm 不直接加载供应商动态库。
+
+think / plugins / reply 检索使用 `info.db.setting.ai_match_min_score`（默认 `0.35`）作为相关度阈值；
+低于阈值视为未命中。reply 资源命中但无插件时记录 `[reply] chat_reply 资源命中（reply_base）`，
+并在 `Reply.resource_hit` 中标记。
 
 ### 2.2 `dialogue_list` → `post_dialogue_list`
 
