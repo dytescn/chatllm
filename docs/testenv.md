@@ -1,7 +1,8 @@
 # testenv 测试环境
 
 > 只记录本地测试环境的初始化与搭建。数据库结构见 `docs/db.md`，
-> 接口测试用例见 `docs/test_base_dialogue.md`、`docs/test_base_message.md`。
+> 接口测试用例见 `docs/test_base_dialogue.md`、`docs/test_base_message.md`、
+> `docs/test_base_call_chat.md`。
 
 ## 1. 目录与文件
 
@@ -23,6 +24,10 @@
 Rust 侧通过 `dlopen` 直接加载 `./libary/database.dll` 与 `./libary/libdesigndb.dll`，
 路径相对于进程工作目录，因此测试进程的 cwd 必须是 `testenv`。
 `tests/common/mod.rs::db_ready()` 会在首次调用时把 cwd 切到 `testenv`，所以**在仓库根目录执行 `cargo test` 即可**。
+
+`call_chat` 冒烟测试使用 `tests/common/mod.rs::kv_ready()`，额外要求
+`testenv/libary/kv_lib.dll` 与 `testenv/plugins/do_test_chat/do_test_chat.dll`；
+同样会在首次调用时切换 cwd。
 
 缺少 `testenv/libary/database.dll` 或 `testenv/database/dialogue.db` 时，依赖数据库的测试会自动跳过并打印原因。
 
@@ -63,3 +68,10 @@ deno run --allow-net seed.ts
 - `clear_db.ts` 会删除库中**所有用户表**（包括与 chatllm 无关的 `prompts`、`embedding_*`），执行前确认该库可重置。
 - 当前 `dialogue` 表有 12 个列；Rust 侧不再自动建表或补列，正式初始化用 `setup.json`，本地 testenv 可用 `setup.ts`。
 - 每次重置环境后需重新执行 `setup.ts` 与 `seed.ts`，否则依赖基础数据的测试会失败。
+- kv 数据（`chat_plugin` / `chat_think` 等）位于 `database/kv_*_0.db`；
+  `seed.ts` 不写入 kv，`call_chat` 冒烟测试依赖已有的 `chat_plugin` 记录。
+- 常用测试入口：
+  - `cargo test --test base_message`
+  - `cargo test --test base_dialogue`
+  - `cargo test --test base_call_chat`
+  - `cargo test --test utils_plugins`

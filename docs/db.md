@@ -40,7 +40,8 @@
 
 - `created_at`：创建时间，文本时间（UTC）。
 - `updated_at`：更新时间，文本时间（UTC）。
-- 当前默认值 `CURRENT_TIMESTAMP` 仅在插入时生效；更新时需由应用层显式刷新，或通过触发器兜底。
+- 默认值 `CURRENT_TIMESTAMP` 仅在插入时生效；当前业务插入使用 `datetime('now')`，
+  更新时由应用层显式刷新 `updated_at`。
 
 ### 1.5 默认列表查询约定
 

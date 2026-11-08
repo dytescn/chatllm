@@ -256,6 +256,11 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
   │          未命中 → 跳过该段
   │     5. reply：合并插件结果 → 检索 chat_reply → 插件调用 cloud → assistant 最终内容
   │
+  ├─ POST /chatllm  call_chat
+  │     kv_search(collection = category, query = prompts) → 调用 Top1 插件
+  │     插件请求：{ plugins_uid, category, prompts, context }
+  │     返回插件 data；不经过 check / think / reply
+  │
   └─ chat_detail 读取 user + assistant
 ```
 
@@ -305,6 +310,9 @@ curl -s -X POST http://127.0.0.1:44944/kv_lib \
 ```bash
 # 单元测试：响应解析
 cargo test kv
+
+# call_chat 冒烟测试：分类检索 + 插件调用
+cargo test --test base_call_chat
 
 # 端到端：启动 testenv 后执行基础流程
 (cd testenv && ./cyctron.exe start)

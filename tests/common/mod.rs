@@ -8,6 +8,9 @@ use std::sync::Once;
 const TESTENV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testenv");
 const TESTENV_LIB: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testenv/libary/database.dll");
 const TESTENV_DB: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testenv/database/dialogue.db");
+const TESTENV_KV_LIB: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testenv/libary/kv_lib.dll");
+const TESTENV_PLUGIN: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/testenv/plugins/do_test_chat/do_test_chat.dll");
 
 static INIT: Once = Once::new();
 
@@ -28,6 +31,29 @@ pub fn db_ready() -> bool {
 pub fn skip(reason: &str) {
     eprintln!(
         "跳过 {}：testenv/libary/database.dll 或 testenv/database/dialogue.db 不存在",
+        reason
+    );
+}
+
+/// kv 与测试插件可用时返回 true，并把进程工作目录切到 `testenv`。
+///
+/// `call_flow` 冒烟测试需要 `./libary/kv_lib.dll` 与
+/// `./plugins/do_test_chat/do_test_chat.dll`。
+pub fn kv_ready() -> bool {
+    if !std::path::Path::new(TESTENV_KV_LIB).exists()
+        || !std::path::Path::new(TESTENV_PLUGIN).exists()
+    {
+        return false;
+    }
+    INIT.call_once(|| {
+        std::env::set_current_dir(TESTENV).expect("切换到 testenv 失败");
+    });
+    true
+}
+
+pub fn skip_kv(reason: &str) {
+    eprintln!(
+        "跳过 {}：testenv/libary/kv_lib.dll 或 testenv/plugins/do_test_chat 不存在",
         reason
     );
 }

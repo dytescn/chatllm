@@ -64,6 +64,11 @@ fn searches_five_chat_plugins_by_default() {
 }
 
 #[test]
+fn plugin_call_is_inactive_outside_invocation() {
+    assert!(!chatllm::utils::plugins::plugin_call_active());
+}
+
+#[test]
 fn joins_multiple_results_and_skips_empty() {
     let results = vec!["first".to_string(), "   ".to_string(), "second".to_string()];
     assert_eq!(join_results(&results).as_deref(), Some("first\n\nsecond"));

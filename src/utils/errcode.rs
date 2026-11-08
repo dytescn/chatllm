@@ -8,6 +8,7 @@ pub enum ChatError {
     Create(String),
     Load(String),
     Append(String),
+    Plugin(String),
 }
 
 impl ChatError {
@@ -17,6 +18,7 @@ impl ChatError {
             ChatError::Create(_) => 400300,
             ChatError::Load(_) => 400303,
             ChatError::Append(_) => 400301,
+            ChatError::Plugin(_) => 400304,
         };
         println!("[errcode] ChatError::code = {}", code);
         code
@@ -28,6 +30,7 @@ impl ChatError {
             ChatError::Create(e) => format!("create dialogue failed: {}", e),
             ChatError::Load(e) => format!("load dialogue failed: {}", e),
             ChatError::Append(e) => format!("append user message failed: {}", e),
+            ChatError::Plugin(e) => format!("plugin call failed: {}", e),
         };
         println!("[errcode] ChatError::message = {}", message);
         message

@@ -4,6 +4,9 @@
 生成最终回复；未命中或调用失败时回退到 `reply_base` 清洗。实现见
 `src/utils/reply.rs`。
 
+`call_chat` 不经过本阶段：它按分类直接调用插件并原样返回插件 `data`，见
+[`../docs/ffi.md`](../docs/ffi.md) 2.6。
+
 ## 输入
 
 ```text

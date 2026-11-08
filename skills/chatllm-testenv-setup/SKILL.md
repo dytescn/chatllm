@@ -172,11 +172,15 @@ cargo test
 `testenv/libary/database.dll` 或 `testenv/database/dialogue.db` 时，
 依赖数据库的测试自动跳过并打印原因。
 
+`call_chat` 冒烟测试使用 `tests/common/mod.rs::kv_ready()`，额外要求
+`testenv/libary/kv_lib.dll` 与 `testenv/plugins/do_test_chat/do_test_chat.dll`。
+
 只跑某个用例：
 
 ```bash
 cargo test --test base_message
 cargo test --test base_message post_message_prompts_to_choose_ai_supplier
+cargo test --test base_call_chat
 ```
 
 ## 9. 通过 HTTP 验证
@@ -197,6 +201,15 @@ curl -s -X POST http://127.0.0.1:44944/chatllm \
   -H "Content-Type: application/libary" \
   -H "FFI-Symbol: chat" \
   -d '{"prompt":"你好","title":"smoke"}'
+```
+
+直接调用插件（跳过 think / reply）：
+
+```bash
+curl -s -X POST http://127.0.0.1:44944/chatllm \
+  -H "Content-Type: application/libary" \
+  -H "FFI-Symbol: call_chat" \
+  -d '{"category":"chat_plugin","prompts":"do_test_chat","context":{}}'
 ```
 
 注意：仅把 `chatllm.dll` 拷进 `testenv/libary` 或 `plugins/` 不会被 cyctron 识别，

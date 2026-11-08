@@ -102,7 +102,9 @@ cp target/release/info_lib.dll ../chatllm/testenv/libary/info_lib.dll
 
 ## 6. 测试现状
 
-- `cargo test` 全绿：`check`、`base_message`、`base_dialogue`、`base_get_dialogue`、`utils_*` 等。
+- `cargo test` 全绿：`check`、`base_message`、`base_dialogue`、`base_get_dialogue`、`base_call_chat`、`utils_*` 等。
+- `base_call_chat` 额外依赖 `testenv/libary/kv_lib.dll` 与
+  `testenv/plugins/do_test_chat/do_test_chat.dll`，缺失时自动跳过。
 - `cargo test` 会切换进程 cwd 到 `testenv`；`database.dll` 会创建空 `info.db`，没有 `setting` 表时相关测试按环境缺失跳过。
 - `setting_ui/src/setup.ts` 已实测可通过 `/info_lib` 写入：
   - 路由 500（父菜单）、501（`/setting/info`）、502（`/setting` 别名）；
@@ -121,6 +123,9 @@ cargo test
 
 # 只验证对话前置检查
 cargo test --test base_message post_message_prompts_to_choose_ai_supplier
+
+# call_chat 冒烟测试（需要 kv_lib 与 do_test_chat）
+cargo test --test base_call_chat
 
 # 启动 testenv
 cd testenv && ./cyctron.exe start

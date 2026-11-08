@@ -18,7 +18,7 @@
 
 - [ ] **统一错误码**
   - 位置：`src/utils/errcode.rs`、各 `src/ffi/*.rs`；
-  - 现状：错误码分散在业务模块和 FFI 层；
+  - 现状：`ChatError` 覆盖对话与插件错误（含 `400304`），FFI 解析错误仍直接写字面量；
   - 验收：错误码集中定义，FFI 只做映射，补充错误码表测试。
 
 - [ ] **SQL 参数化**
@@ -62,4 +62,7 @@
 - [x] 供应商（deepseek / siliconflow_t2t）统一走 `cloud`；
 - [x] reply 优先检索 `plugins_reply`，支持 `plugins_uid` 对话复用 / 创建；
 - [x] `reply_base` 资源包清洗与系统对话；
-- [x] 64 KiB 输出缓冲区与 FFI 错误码。
+- [x] 64 KiB 输出缓冲区与 FFI 错误码；
+- [x] `call_chat`：按 kv 分类直接调用插件，跳过 think_base / reply；
+- [x] 插件库缓存复用（进程内常驻）与同线程重入保护；
+- [x] `call_chat` 单元测试与 `testenv` 冒烟测试。

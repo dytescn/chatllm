@@ -13,6 +13,7 @@
 - 对话列表、搜索、更新、详情与游标分页；
 - 对话前置检查：确认 AI 供应商与 AppKey 已配置；
 - `check → think → plugins → reply` 对话编排；
+- `call_chat`：按 kv 分类直接定位并调用插件，跳过 think_base / reply；
 - 消息 Markdown 渲染为 `content_html`。
 
 供应商调用统一由 `cloud.rs` 处理：`reply` 命中供应商插件时调用独立的
@@ -37,6 +38,11 @@ chat
 
 供应商检查成功后会缓存 `info.db` 的修改时间与大小；`info.db` 变化时缓存自动失效。
 
+`call_chat` 是独立的轻量流程：不执行 check / think / reply，直接用 `category`
+作为 kv 集合名、`prompts` 作为检索词取 Top1 插件，并把
+`{plugins_uid, category, prompts, context}` 原样交给插件，返回插件 `data`。
+细节见 [`docs/ffi.md`](docs/ffi.md#26-call_chat--post_call_chat)。
+
 ## FFI
 
 所有接口统一返回 `{code, data, msg}`，成功 `code = 200`。结果写入调用方提供的
@@ -49,6 +55,7 @@ chat
 | `dialogue_update` | `post_dialogue_update` | 更新标题、显示状态、置顶 / 归档 |
 | `dialogue_search` | `post_dialogue_search` | 按标题 / keyword 搜索 |
 | `chat_detail` | `post_chat_detail` | 读取对话与消息，支持游标分页 |
+| `call_chat` | `post_call_chat` | 按 kv 分类直接调用插件 |
 
 接口细节见 [`docs/ffi.md`](docs/ffi.md)。
 
@@ -82,24 +89,35 @@ cargo build --release
 cargo test
 ```
 
+`cargo test` 包含单元测试与 `testenv` 数据测试；缺少 `testenv/libary/*` 或
+`testenv/database/*` 时，相关用例会自动跳过并打印原因。`call_chat` 冒烟测试
+（`tests/base_call_chat.rs`）额外需要 `kv_lib.dll` 与
+`plugins/do_test_chat/do_test_chat.dll`。
+
 产物：`target/release/chatllm.dll`（Linux `libchatllm.so`、macOS
 `libchatllm.dylib`）。
 
 ## 文档
 
-- [`docs/ffi.md`](docs/ffi.md)：FFI 接口与错误码
+- [`docs/ffi.md`](docs/ffi.md)：FFI 接口、插件直接调用与错误码
 - [`docs/db.md`](docs/db.md)：对话存储结构
 - [`docs/kv_lib.md`](docs/kv_lib.md)：kv_lib 调用方式
 - [`docs/testenv.md`](docs/testenv.md)：本地测试环境
+- [`docs/test_base_message.md`](docs/test_base_message.md)：`chat` 接口测试
+- [`docs/test_base_dialogue.md`](docs/test_base_dialogue.md)：对话列表 / 更新测试
+- [`docs/test_base_call_chat.md`](docs/test_base_call_chat.md)：`call_chat` 冒烟测试
 - [`runflow/base.md`](runflow/base.md)：基础对话流程
 - [`runflow/think.md`](runflow/think.md)：think_base / reply_base 资源包流程
 - [`runflow/plugins.md`](runflow/plugins.md)：插件检索与执行
 - [`runflow/reply.md`](runflow/reply.md)：chat_reply 与最终回复
 - [`todo/TODO.md`](todo/TODO.md)：路线图与待办
+- [`skills/`](skills/)：本地环境搭建与测试操作手册
 
 ## 已知限制
 
 - 外部库路径固定为 `./libary/*`，暂未配置化；
 - 输出缓冲区固定 64 KiB，超长结果会被拒绝（`-2`）；
+- 插件与系统库加载后常驻缓存，进程内不主动卸载；
+- 同一线程内禁止插件重入调用（返回 `400304`），跨线程回调需插件自身可重入；
 - `dialogue` 使用文本时间，`messages` 使用 Unix 毫秒；
 - 错误码仍分散在各模块。

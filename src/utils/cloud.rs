@@ -175,22 +175,36 @@ pub fn token(supplier: Supplier) -> Result<String> {
 }
 
 /// 已加载的云端系统库缓存，避免每次调用重复 `dlopen`。
+///
+/// `dlopen` 不持缓存锁：加载会触发 loader lock，持锁加载可能与其他线程的
+/// 锁交叉等待。锁只用于命中 / 回填缓存。
 fn library(lib_name: &str) -> Result<Arc<Library>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<Library>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = cache
-        .lock()
-        .map_err(|_| anyhow::anyhow!("系统库缓存已损坏"))?;
 
-    if let Some(lib) = cache.get(lib_name) {
-        return Ok(Arc::clone(lib));
+    if let Some(lib) = cache
+        .lock()
+        .map_err(|_| anyhow::anyhow!("系统库缓存已损坏"))?
+        .get(lib_name)
+        .cloned()
+    {
+        return Ok(lib);
     }
 
     let path = resolve_library_path(lib_name)
         .with_context(|| format!("找不到云端系统库 {}（应放在 ./libary/）", lib_name))?;
-    let lib = unsafe { Library::new(&path) }
-        .with_context(|| format!("加载云端系统库 {} 失败", path.display()))?;
-    let lib = Arc::new(lib);
+    let lib = Arc::new(
+        unsafe { Library::new(&path) }
+            .with_context(|| format!("加载云端系统库 {} 失败", path.display()))?,
+    );
+
+    let mut cache = cache
+        .lock()
+        .map_err(|_| anyhow::anyhow!("系统库缓存已损坏"))?;
+    // 双检：并发首加载时保留先写入的库，当前 Arc 在无人使用时自然释放。
+    if let Some(existing) = cache.get(lib_name) {
+        return Ok(Arc::clone(existing));
+    }
     cache.insert(lib_name.to_string(), Arc::clone(&lib));
     Ok(lib)
 }

@@ -1,5 +1,6 @@
 // src/ffi/types.rs
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// 对话元信息（`update_dialogue` 入参）
 #[derive(Debug, Deserialize, Serialize)]
@@ -58,4 +59,19 @@ pub struct DialogueListReq {
     pub keyword: Option<String>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
+}
+
+/// 直接调用插件（`post_call_chat` 入参）。
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CallChatReq {
+    /// 对话 id；插件据此查找相关对话内容
+    pub plugins_uid: Option<String>,
+    /// kv 分类（集合名），如 `chat_plugin`
+    pub category: String,
+    /// 提示词 / 检索词；同时作为插件定位的 query
+    #[serde(default)]
+    pub prompts: String,
+    /// 透传给插件的 JSON 内容
+    #[serde(default)]
+    pub context: Value,
 }

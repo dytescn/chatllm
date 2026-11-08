@@ -87,14 +87,20 @@ chat
 ```bash
 cargo build --release
 cp target/release/chatllm.dll testenv/libary/chatllm.dll
-
-cd testenv
-./cyctron.exe start
 ```
+
+在仓库根目录运行脚本：
 
 ```bash
 deno run --allow-net --allow-read ts/test_think_base.ts
 deno run --allow-net --allow-read ts/test_full_flow.ts
+```
+
+cyctron 在另一个终端启动：
+
+```bash
+cd testenv
+./cyctron.exe start
 ```
 
 测试脚本会临时写入所需的 `chat_think` / `chat_plugin` 数据，结束后恢复。

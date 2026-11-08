@@ -11,9 +11,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use libloading::Library;
 use serde_json::{json, Value};
+use std::cell::Cell;
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::utils::cloud::Supplier;
 use crate::utils::kv;
@@ -187,18 +190,130 @@ fn candidates(plugin: &str) -> Vec<PathBuf> {
     ]
 }
 
+/// 已加载的插件库缓存：插件名 → 动态库。
+///
+/// 与 `cloud` 的供应商库缓存一致，加载后不主动卸载，避免反复
+/// `dlopen` / `dlclose` 触发 loader lock，也让插件内的静态状态得以保留。
+static PLUGIN_LIBS: OnceLock<Mutex<HashMap<String, Arc<Library>>>> = OnceLock::new();
+
+/// 加载（或复用）插件动态库。
+///
+/// `dlopen` 不持缓存锁：插件加载可能触发 loader lock，持锁加载会与其他
+/// 线程的锁形成交叉等待。锁只用于命中 / 回填缓存。
+fn plugin_library(plugin: &str) -> Result<Arc<Library>> {
+    let cache = PLUGIN_LIBS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(lib) = cache
+        .lock()
+        .map_err(|_| anyhow!("插件库缓存已损坏"))?
+        .get(plugin)
+        .cloned()
+    {
+        return Ok(lib);
+    }
+
+    let path = candidates(plugin)
+        .into_iter()
+        .find(|path| path.exists())
+        .with_context(|| format!("找不到插件 {plugin}（./plugins/{plugin}/ 或 ./libary/）"))?;
+    println!("[plugins] 插件路径: {}", path.display());
+    let lib = Arc::new(
+        unsafe { Library::new(&path) }
+            .with_context(|| format!("加载插件 {} 失败", path.display()))?,
+    );
+
+    let mut cache = cache.lock().map_err(|_| anyhow!("插件库缓存已损坏"))?;
+    // 双检：并发首加载时保留先写入的库，当前 Arc 在无人使用时自然释放。
+    if let Some(existing) = cache.get(plugin) {
+        return Ok(Arc::clone(existing));
+    }
+    cache.insert(plugin.to_string(), Arc::clone(&lib));
+    Ok(lib)
+}
+
+thread_local! {
+    /// 当前线程正在执行的插件调用层数。
+    static PLUGIN_DEPTH: Cell<usize> = Cell::new(0);
+}
+
+/// 当前线程是否正在执行插件。
+///
+/// 插件回调 chatllm 时，`post_call_chat` 会再次进入插件调用；调用方可在
+/// 前置阶段直接拒绝，避免递归加载与引擎锁死。
+pub fn plugin_call_active() -> bool {
+    PLUGIN_DEPTH.with(|depth| depth.get() > 0)
+}
+
+/// 插件调用重入保护：同一线程只允许一层插件调用。
+pub(crate) struct PluginCallGuard;
+
+impl PluginCallGuard {
+    pub(crate) fn enter() -> Result<Self> {
+        PLUGIN_DEPTH.with(|depth| {
+            if depth.get() > 0 {
+                bail!("检测到插件重入调用（当前线程已在执行插件）");
+            }
+            depth.set(depth.get() + 1);
+            Ok(PluginCallGuard)
+        })
+    }
+}
+
+impl Drop for PluginCallGuard {
+    fn drop(&mut self) {
+        PLUGIN_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
 /// 执行插件：dlopen 后调用 `post_<symbol>`，返回响应 `data.content`。
 pub fn call_plugin(plugin: &str, symbol: &str, input: &str) -> Result<String> {
+    let response = invoke_plugin(plugin, symbol, &json!({ "prompt": input }))?;
+    Ok(content_of_response(&response))
+}
+
+/// 执行插件并原样返回响应 `data`。
+///
+/// 用于 `post_call_chat`：插件接收调用方给出的完整 JSON，而不是 `prompt` 包装。
+pub fn call_plugin_data(plugin: &str, symbol: &str, request: &Value) -> Result<Value> {
     println!(
-        "[plugins] call_plugin: plugin={:?}, symbol={:?}, input={:?}",
+        "[plugins] call_plugin_data: plugin={:?}, symbol={:?}, request={:?}",
         plugin,
         symbol,
-        preview(input, 200)
+        preview(&request.to_string(), 400)
+    );
+    let response = invoke_plugin(plugin, symbol, request)?;
+    Ok(response.get("data").cloned().unwrap_or(Value::Null))
+}
+
+/// 取插件响应 `data.content`。
+fn content_of_response(value: &Value) -> String {
+    value
+        .get("data")
+        .and_then(|data| data.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// 调用插件并返回完整响应 JSON（含 `code` / `data` / `msg`）。
+fn invoke_plugin(plugin: &str, symbol: &str, request: &Value) -> Result<Value> {
+    // 重入保护：插件回调 chatllm 时不允许再次进入插件调用。
+    let _guard = PluginCallGuard::enter()?;
+    println!(
+        "[plugins] invoke_plugin: plugin={:?}, symbol={:?}, request={:?}",
+        plugin,
+        symbol,
+        preview(&request.to_string(), 400)
     );
     // 供应商插件统一走 cloud，不再由插件各自 dlopen 供应商库。
     if let Some(supplier) = Supplier::from_exact_code(plugin) {
         println!("[plugins] 供应商插件走 cloud: {:?}", supplier);
-        let reply = match crate::utils::cloud::chat_with(supplier, input, &[]) {
+        let input = request
+            .get("prompt")
+            .and_then(Value::as_str)
+            .or_else(|| request.get("prompts").and_then(Value::as_str))
+            .map(str::to_string)
+            .unwrap_or_else(|| request.to_string());
+        let reply = match crate::utils::cloud::chat_with(supplier, &input, &[]) {
             Ok(reply) => reply,
             Err(error) => {
                 println!("[plugins] cloud 调用失败: {:#}", error);
@@ -210,17 +325,14 @@ pub fn call_plugin(plugin: &str, symbol: &str, input: &str) -> Result<String> {
             preview(&reply.content, 300),
             reply.model
         );
-        return Ok(reply.content);
+        return Ok(json!({
+            "code": 200,
+            "data": { "content": reply.content },
+            "msg": "success",
+        }));
     }
 
-    let path = candidates(plugin)
-        .into_iter()
-        .find(|path| path.exists())
-        .with_context(|| format!("找不到插件 {plugin}（./plugins/{plugin}/ 或 ./libary/）"))?;
-    println!("[plugins] 插件路径: {}", path.display());
-
-    let lib = unsafe { Library::new(&path) }
-        .with_context(|| format!("加载插件 {} 失败", path.display()))?;
+    let lib = plugin_library(plugin)?;
     let entry = format!("post_{}", symbol);
     let function: libloading::Symbol<'_, FfiFn> = unsafe {
         match lib.get::<FfiFn>(entry.as_bytes()) {
@@ -231,24 +343,20 @@ pub fn call_plugin(plugin: &str, symbol: &str, input: &str) -> Result<String> {
                 lib.get::<FfiFn>(b"post_chat").with_context(|| {
                     format!(
                         "dlsym {} / post_chat 失败（{}）: {}",
-                        entry,
-                        path.display(),
-                        first
+                        entry, plugin, first
                     )
                 })?
             }
             Err(first) => {
                 return Err(anyhow!(
                     "dlsym {} 失败（{}）: {}",
-                    entry,
-                    path.display(),
-                    first
+                    entry, plugin, first
                 ))
             }
         }
     };
 
-    let request = json!({ "prompt": input }).to_string();
+    let request = request.to_string();
     println!("[plugins] 插件请求: {:?}", preview(&request, 400));
     let req = CString::new(request).context("插件请求 JSON 含 \\0")?;
     let mut out = vec![0u8; OUT_BUF_SIZE];
@@ -278,12 +386,65 @@ pub fn call_plugin(plugin: &str, symbol: &str, input: &str) -> Result<String> {
         bail!("插件 {} 错误 (code={}): {}", plugin, code, msg);
     }
 
-    let content = value
-        .get("data")
-        .and_then(|data| data.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    println!("[plugins] 插件 content: {:?}", preview(&content, 300));
-    Ok(content)
+    println!(
+        "[plugins] 插件 data: {:?}",
+        preview(
+            &value
+                .get("data")
+                .map(|data| data.to_string())
+                .unwrap_or_default(),
+            300
+        )
+    );
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_nested_plugin_call() {
+        let outer = PluginCallGuard::enter().expect("首层调用应成功");
+        assert!(plugin_call_active());
+        assert!(PluginCallGuard::enter().is_err(), "同线程重入应被拒绝");
+        drop(outer);
+        assert!(!plugin_call_active());
+    }
+
+    #[test]
+    fn guard_recovers_after_reentry_error() {
+        {
+            let _outer = PluginCallGuard::enter().expect("首层调用应成功");
+            assert!(PluginCallGuard::enter().is_err());
+        }
+        // 外层释放后应恢复可调用状态。
+        let _again = PluginCallGuard::enter().expect("外层释放后应可再次进入");
+    }
+
+    #[test]
+    fn plugin_call_active_is_thread_local() {
+        let _outer = PluginCallGuard::enter().expect("首层调用应成功");
+        let active = std::thread::spawn(plugin_call_active).join().unwrap();
+        assert!(!active, "重入标记不应影响其他线程");
+    }
+
+    #[test]
+    fn content_of_response_extracts_string() {
+        assert_eq!(
+            content_of_response(&json!({ "data": { "content": "hello" } })),
+            "hello"
+        );
+        assert_eq!(
+            content_of_response(&json!({ "data": { "content": "  " } })),
+            "  "
+        );
+    }
+
+    #[test]
+    fn content_of_response_defaults_empty() {
+        assert_eq!(content_of_response(&json!({})), "");
+        assert_eq!(content_of_response(&json!({ "data": {} })), "");
+        assert_eq!(content_of_response(&json!({ "data": { "content": 1 } })), "");
+    }
 }

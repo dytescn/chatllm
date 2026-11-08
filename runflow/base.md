@@ -1,6 +1,11 @@
 # 基础对话流程
 
 本文描述一次 `chat` 调用的完整路径：`check → think → plugins → reply`。
+实现见 `src/utils/run_flow.rs`（流程编排）与 `src/utils/dialogue.rs`
+（对话生命周期）。
+
+`call_chat` 是另一条独立流程：不做 check / think / reply，按 kv 分类直接调用
+插件，见 [`../docs/ffi.md`](../docs/ffi.md) 2.6。
 
 ## 流程
 
@@ -40,7 +45,8 @@ reply：合并插件结果，检索 chat_reply；命中插件调用 cloud，未�
 - plugins 每段独立执行，结果以空行合并；
 - 供应商类插件（`deepseek` / `siliconflow_t2t`，可带 `lib` 前缀）统一走
   `cloud::chat_with`，由独立系统库 `cloud_lib` 调用；
-- 插件或供应商错误只影响 assistant 内容，不阻断消息存储。
+- 插件或供应商错误只影响 assistant 内容，不阻断消息存储；
+- 插件库按插件名缓存复用，同一线程内禁止插件重入（与 `call_chat` 共用保护）。
 
 ## 配置
 
@@ -61,10 +67,9 @@ reply：合并插件结果，检索 chat_reply；命中插件调用 cloud，未�
 ```bash
 cargo build --release
 cp target/release/chatllm.dll testenv/libary/chatllm.dll
-
-cd testenv
-./cyctron.exe start
 ```
+
+在仓库根目录运行脚本（脚本通过已启动的 cyctron 访问 `testenv`）：
 
 ```bash
 # 未配置供应商：直接返回设置提示
@@ -78,6 +83,13 @@ deno run --allow-net ts/test_cloud.ts
 
 # 真实供应商（token 目录由 FUNXTOKEN_DIR 指定）
 deno run --allow-net --allow-read --allow-env ts/test_live.ts
+```
+
+cyctron 在另一个终端启动：
+
+```bash
+cd testenv
+./cyctron.exe start
 ```
 
 手工调用：

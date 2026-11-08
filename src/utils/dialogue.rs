@@ -363,92 +363,15 @@ fn preview(value: &str, max: usize) -> String {
     out
 }
 
-/// 已配置 AI 供应商后的对话流程：
-///
-/// 1. `think`：检索 `chat_think`；
-/// 2. 按 `|` 拆分为数组；
-/// 3. 数组中的每一段分别查询 `chat_plugin` 并执行插件；
-/// 4. 合并插件结果，交给 `reply` 生成最终 assistant 内容。
-///
-/// think 未命中或拆分后没有有效段时，跳过插件，直接把用户原 prompt 交给 `reply`。
-fn reply_with_pipeline(prompt: &str) -> String {
-    let thought = match crate::utils::think::query(prompt, crate::utils::think::TOP_K) {
-        Ok(value) => value,
-        Err(error) => {
-            println!("[chat] think 检索失败: {:#}", error);
-            None
-        }
-    };
-
-    let queries = thought
-        .as_deref()
-        .map(crate::utils::think::segments)
-        .unwrap_or_default();
-    let results = crate::utils::plugins::handle_many(&queries);
-    let plugin_result = crate::utils::plugins::join_results(&results);
-    let reply = crate::utils::reply::Reply::from_result(plugin_result.clone(), prompt);
-
-    if !reply.used_reply_plugin {
-        if let Some(input) = plugin_result.as_deref() {
-            record_reply_exchange(input, &reply.content);
-        }
-    }
-
-    reply.content
-}
-
-/// 把 plugins 结果与 reply_base 清洗结果写入 reply_base 系统对话。
-///
-/// 对话 id 使用 reply_base uuid；不存在时创建，并把 skills 写入 system_prompt。
-fn record_reply_exchange(input: &str, output: &str) {
-    let Some(uuid) = crate::utils::reply_base::uuid() else {
-        println!("[reply] reply_base 未安装，跳过系统对话写入");
-        return;
-    };
-    let skills = crate::utils::reply_base::skills();
-    println!(
-        "[reply] 写入 reply_base 系统对话: uuid={}, system={}, input={:?}, output={:?}",
-        uuid,
-        skills.is_some(),
-        preview(input, 200),
-        preview(output, 200)
-    );
-
-    match get_dialogue(&uuid) {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            let title = "reply_base 系统对话";
-            if let Err(error) = create_dialogue_with(Some(&uuid), title, 2, skills.as_deref()) {
-                println!("[reply] 创建 reply_base 系统对话失败: {:#}", error);
-                return;
-            }
-            println!("[reply] 已创建 reply_base 系统对话: {}", uuid);
-        }
-        Err(error) => {
-            println!("[reply] 查询 reply_base 系统对话失败: {:#}", error);
-            return;
-        }
-    }
-
-    if !input.trim().is_empty() {
-        if let Err(error) = message::append_message(&uuid, "user", input) {
-            println!("[reply] 写入 reply_base user 消息失败: {:#}", error);
-        }
-    }
-    if !output.trim().is_empty() {
-        if let Err(error) = message::append_message(&uuid, "assistant", output) {
-            println!("[reply] 写入 reply_base assistant 消息失败: {:#}", error);
-        }
-    }
-}
-
 /// 新建或续聊对话，并把 `prompt` 写成一条 user 消息，返回 `(uuid, created)`。
+///
+/// 只负责对话生命周期；`think → plugins → reply` 由 `utils::run_flow` 编排。
 ///
 /// - `uuid` 非空：续聊已有对话，不存在则报错；
 /// - `plugin_uuid` 非空：以它作为对话 id，已存在则复用，新建时 `show_status` 默认 2；
 /// - `system_prompt`：仅新建对话时写入 `dialogue.system_prompt`；
 /// - 其余情况：自动生成 id，`show_status` 默认 1。
-pub fn open_chat(
+pub fn open_dialogue(
     prompt: &str,
     uuid: Option<&str>,
     plugin_uuid: Option<&str>,
@@ -457,7 +380,7 @@ pub fn open_chat(
     system_prompt: Option<&str>,
 ) -> Result<(String, bool), ChatError> {
     println!(
-        "[dialogue] open_chat: prompt={:?}, uuid={:?}, plugin_uuid={:?}, title={:?}, show_status={:?}, system={}",
+        "[dialogue] open_dialogue: prompt={:?}, uuid={:?}, plugin_uuid={:?}, title={:?}, show_status={:?}, system={}",
         preview(prompt, 200),
         uuid,
         plugin_uuid,
@@ -511,18 +434,16 @@ pub fn open_chat(
 
     message::append_message(&uuid, "user", prompt).map_err(|e| ChatError::Append(e.to_string()))?;
 
-    // check 已在 FFI 入口完成；这里直接进入 think → plugins → reply。
-    let content = reply_with_pipeline(prompt);
-    message::append_message(&uuid, "assistant", &content)
-        .map_err(|e| ChatError::Append(e.to_string()))?;
-
     println!(
-        "[dialogue] open_chat 完成: uuid={}, created={}, assistant={:?}",
-        uuid,
-        created,
-        preview(&content, 300)
+        "[dialogue] open_dialogue 完成: uuid={}, created={}",
+        uuid, created
     );
     Ok((uuid, created))
+}
+
+/// 写入 assistant 消息。
+pub fn append_assistant(uuid: &str, content: &str) -> Result<(), ChatError> {
+    message::append_message(uuid, "assistant", content).map_err(|e| ChatError::Append(e.to_string()))
 }
 
 pub fn is_valid_uuid(uuid: &str) -> bool {

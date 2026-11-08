@@ -109,67 +109,8 @@ pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) ->
         Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
     };
 
-    // check 阶段：配置缺失时直接返回，不创建对话、不写消息。
-    if let Some(message) = crate::utils::check::missing_supplier_reply() {
-        println!("[chat] check 未通过，直接返回设置提示");
-        return write_success(
-            json_out,
-            "success",
-            json!({
-                "uuid": null,
-                "created": false,
-                "prompt": req.prompt,
-                "max_tokens": req.max_tokens,
-                "route": crate::utils::check::SETTING_ROUTE,
-                "content": message,
-                "content_html": "",
-            }),
-        );
-    }
-
-    // think 阶段：命中 chat_think 后取出资源包 uuid/name，用于定位对话与 skills。
-    let (think_plugin_uuid, system_prompt) = {
-        match crate::utils::think::find(&req.prompt, crate::utils::think::TOP_K) {
-            Ok(Some(hit)) => {
-                let system = hit
-                    .plugin_name
-                    .as_deref()
-                    .and_then(crate::utils::think::skills_for);
-                (hit.plugin_uuid, system)
-            }
-            Ok(None) => (None, None),
-            Err(error) => {
-                println!("[chat] think 检索失败: {:#}", error);
-                (None, None)
-            }
-        }
-    };
-    // 只有调用方显式传入的 plugin_uuid 才能作为对话 id；think 命中的 uuid
-    // 只用于标识插件 / 读取 skills，不能复用为对话 id，否则命中同一插件的
-    // 多个对话会互相覆盖。
-    let dialogue_plugin_uuid = req.plugin_uuid.as_deref();
-    let response_plugin_uuid = req.plugin_uuid.as_deref().or(think_plugin_uuid.as_deref());
-
-    match dialogue::open_chat(
-        &req.prompt,
-        req.uuid.as_deref(),
-        dialogue_plugin_uuid,
-        req.title.as_deref(),
-        req.show_status,
-        system_prompt.as_deref(),
-    ) {
-        Ok((uuid, created)) => write_success(
-            json_out,
-            "success",
-            json!({
-                "uuid": uuid,
-                "created": created,
-                "prompt": req.prompt,
-                "max_tokens": req.max_tokens,
-                "route": null,
-                "plugin_uuid": response_plugin_uuid,
-            }),
-        ),
+    match crate::utils::run_flow::run(&req) {
+        Ok(data) => write_success(json_out, "success", data),
         Err(e) => write_error(json_out, e.code(), &e.message()),
     }
 }

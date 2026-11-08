@@ -1,7 +1,8 @@
 # chatllm FFI 接口
 
 `chatllm` 编译为 `cdylib`，由宿主通过 `POST /chatllm` + `FFI-Symbol` 调用。
-对话流程为 `check → think → plugins → reply`；数据存储见
+常规对话流程为 `check → think → plugins → reply`；`call_chat` 是独立的直接
+调用插件流程（不执行 check / think / reply）。数据存储见
 [`db.md`](db.md)，向量检索见 [`kv_lib.md`](kv_lib.md)。
 
 > 当前版本 **1.0.13**。供应商调用统一走 `cloud_lib`；对话表由 `setup.json` 初始化。
@@ -28,6 +29,7 @@ int (*)(const char *json_in, char *json_out);
 | `dialogue_update` | `post_dialogue_update` | 更新对话字段 |
 | `dialogue_search` | `post_dialogue_search` | 按标题搜索 |
 | `chat_detail` | `post_chat_detail` | 读取对话与消息 |
+| `call_chat` | `post_call_chat` | 按分类检索并直接调用插件，返回插件 data |
 
 ### 2.1 `chat` → `post_chat`
 
@@ -152,6 +154,54 @@ think / plugins / reply 检索使用 `info.db.setting.ai_match_min_score`（默�
 
 每条消息附带 `content_html`（由 `parse` 即时渲染）。
 
+### 2.6 `call_chat` → `post_call_chat`
+
+不执行 think_base / reply，直接在 kv 分类中定位插件并把内容交给插件：
+
+```c
+int post_call_chat(const char *json_in, char *json_out);
+```
+
+请求：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `category` | string | 是 | kv 分类（集合名），如 `chat_plugin` |
+| `plugins_uid` | string | 否 | 对话 id；插件据此查找相关对话内容 |
+| `prompts` | string | 否 | 提示词 / 分类内的检索词 |
+| `context` | any | 否 | 透传给插件的 JSON 内容 |
+
+```json
+{
+  "plugins_uid": "6f2b8d41-9c3a-4e7d-8d5f-1a2c3e4b5d60",
+  "category": "chat_plugin",
+  "prompts": "整理当前会话",
+  "context": { "messages": [] }
+}
+```
+
+流程：
+
+1. 以 `category` 为集合名、`prompts` 为 query 检索，取 Top1 命中；
+2. 从命中记录解析插件（`meta.plugin` / `value.lib_name` 与 `ffi_symbol`）；
+3. 把下面四个字段原样作为插件 `json_in` 调用插件：
+
+```json
+{ "plugins_uid": "…", "category": "…", "prompts": "…", "context": { } }
+```
+
+4. 原样返回插件响应中的 `data`：
+
+```json
+{ "code": 200, "data": { "...": "插件返回的 data" }, "msg": "success" }
+```
+
+分类内未命中插件、命中记录无插件信息或插件调用失败时返回 `400304`。
+插件库加载后会缓存复用；同一线程内若插件回调 chatllm 再次触发插件调用，
+会作为重入直接返回 `400304`，避免递归加载与引擎锁互相等待。
+本接口不向宿主推送阶段事件。冒烟用例见
+[`test_base_call_chat.md`](test_base_call_chat.md)。
+
 ## 3. 错误码
 
 | 码 | 含义 |
@@ -164,14 +214,18 @@ think / plugins / reply 检索使用 `info.db.setting.ai_match_min_score`（默�
 | `400301` | 追加 user 消息失败 |
 | `400302` | 对话列表失败 |
 | `400303` | 读取 / 更新对话失败 |
+| `400304` | 插件未命中 / 插件信息缺失 / 插件调用失败 |
 
 ## 4. 相关文件
 
 | 文件 | 内容 |
 | --- | --- |
-| `src/ffi/chat.rs` | FFI 入口 |
+| `src/ffi/chat.rs` | 普通对话 FFI 入口 |
+| `src/ffi/call_back.rs` | 直接调用插件 FFI 入口 |
 | `src/ffi/types.rs` | 请求结构 |
 | `src/utils/cjson.rs` | 响应包络与缓冲区 |
+| `src/utils/run_flow.rs` | 正常对话流程编排 |
+| `src/utils/call_flow.rs` | 分类检索并直接调用插件 |
 | `src/utils/check.rs` | 供应商配置检查 |
 | `src/utils/think.rs` | `chat_think` 检索与分段 |
 | `src/utils/plugins.rs` | `chat_plugin` 检索与插件调用 |
