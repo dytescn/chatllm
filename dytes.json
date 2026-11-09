@@ -1,7 +1,7 @@
 {
   "name": "chatllm",
   "uuid": "69b786e9-19d9-4fe0-b868-048726e1e5b8",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "system for ai chat",
   "keywords": [
     "chat",
