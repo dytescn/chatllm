@@ -18,7 +18,6 @@
 //   之后 plugins → reply 仍然工作；
 // - 结束后恢复 ai_supplier、两个 AppKey、think-greeting，并归档测试对话。
 
-const BASE = "http://127.0.0.1:44944";
 const INFO_DB = "./info";
 const SUPPLIER_KEY = "ai_supplier";
 const DEEPSEEK_TOKEN = "deepseek_app_key";
@@ -46,22 +45,7 @@ function assert(cond: boolean, message: string) {
   }
 }
 
-async function post(api: string, symbol: string, body: Json = {}): Promise<Json> {
-  const response = await fetch(`${BASE}/${api}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/libary",
-      "FFI-Symbol": symbol,
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`${api}/${symbol} 返回非 JSON（HTTP ${response.status}）：${text}`);
-  }
-}
+import { post } from "./ffi.ts";
 
 function rows(payload: Json): Json[] {
   const data = payload?.data;

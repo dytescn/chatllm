@@ -1,5 +1,5 @@
-// ts/client.ts —— chatllm FFI 调用与测试辅助
-const BASE = "http://127.0.0.1:44944";
+// ts/client.ts —— chatllm FFI 调用与测试辅助（Deno FFI，不走 HTTP）
+import { post } from "./ffi.ts";
 
 export type Json = Record<string, any>;
 
@@ -23,22 +23,7 @@ export function summary() {
   return failed;
 }
 
-/** 调用 chatllm 的一个 FFI-Symbol。 */
+/** 调用 chatllm 的一个 FFI-Symbol（同步 FFI，保持 async 以兼容旧调用）。 */
 export async function call(symbol: string, body: Json = {}): Promise<Json> {
-  const response = await fetch(`${BASE}/chatllm`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/libary",
-      "FFI-Symbol": symbol,
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(
-      `${symbol} 返回非 JSON（HTTP ${response.status}）：${text}`,
-    );
-  }
+  return post("chatllm", symbol, body);
 }

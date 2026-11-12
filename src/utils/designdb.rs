@@ -22,13 +22,13 @@ const DESIGNDB_LIB: &str = "./libary/libdesigndb.so";
 #[cfg(target_os = "macos")]
 const DESIGNDB_LIB: &str = "./libary/libdesigndb.dylib";
 
-/// 与 designdb 的 `write_json_out` 保持一致。
-const OUT_BUF_SIZE: usize = 65536;
+/// 与 designdb 1.0.3 的 `write_json_out` 保持一致（单次响应上限 16 MiB）。
+const OUT_BUF_SIZE: usize = 16 * 1024 * 1024;
 
 /// chatllm 唯一逻辑库名（旧单库实现，保留说明；新实现按对话 UUID 分库）。
 /// 旧数据库 `chatllm` 由迁移脚本处理。
 
-/// 分页扫描的页大小。designdb 单次响应上限 64 KiB，取 50 条留出余量。
+/// 分页扫描的页大小。designdb 1.0.3 单次响应上限 16 MiB，50 条为保守取值。
 const SCAN_PAGE_SIZE: u64 = 50;
 
 type FfiFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;

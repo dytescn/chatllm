@@ -14,8 +14,8 @@ const DB_SO_PATH: &str = "./libary/database.so";
 #[cfg(target_os = "macos")]
 const DB_SO_PATH: &str = "./libary/database.dylib";
 
-/// 输出缓冲区大小
-const OUT_BUF_SIZE: usize = 65536;
+/// 输出缓冲区大小：database 1.0.5+ 约定 `json_out` 至少 1 MiB。
+const OUT_BUF_SIZE: usize = 1024 * 1024;
 
 type PostDbQueryFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 type PostDbInsertFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
@@ -45,8 +45,8 @@ fn db_query_fn() -> Result<PostDbQueryFn> {
     }
     let lib = ensure_library()?;
     let f = unsafe {
-        *lib.get::<PostDbQueryFn>(b"post_db_query")
-            .context("dlsym post_db_query 失败")?
+        *lib.get::<PostDbQueryFn>(b"db_query")
+            .context("dlsym db_query 失败")?
     };
     let _ = DB_QUERY_FN.set(f);
     Ok(f)
@@ -58,8 +58,8 @@ fn db_insert_fn() -> Result<PostDbInsertFn> {
     }
     let lib = ensure_library()?;
     let f = unsafe {
-        *lib.get::<PostDbInsertFn>(b"post_db_insert")
-            .context("dlsym post_db_insert 失败")?
+        *lib.get::<PostDbInsertFn>(b"db_insert")
+            .context("dlsym db_insert 失败")?
     };
     let _ = DB_INSERT_FN.set(f);
     Ok(f)
@@ -71,8 +71,8 @@ fn db_update_fn() -> Result<PostDbUpdateFn> {
     }
     let lib = ensure_library()?;
     let f = unsafe {
-        *lib.get::<PostDbUpdateFn>(b"post_db_update")
-            .context("dlsym post_db_update 失败")?
+        *lib.get::<PostDbUpdateFn>(b"db_update")
+            .context("dlsym db_update 失败")?
     };
     let _ = DB_UPDATE_FN.set(f);
     Ok(f)

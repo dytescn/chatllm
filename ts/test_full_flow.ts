@@ -13,7 +13,6 @@
 // 运行：
 //   deno run --allow-net --allow-read ts/test_full_flow.ts
 
-const BASE = "http://127.0.0.1:44944";
 const INFO_DB = "./info";
 const DIALOGUE_DB = "./dialogue";
 const THINK_COLLECTION = "chat_think";
@@ -37,19 +36,7 @@ function assert(cond: boolean, message: string) {
   }
 }
 
-async function post(api: string, symbol: string, body: Json = {}): Promise<Json> {
-  const response = await fetch(`${BASE}/${api}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/libary", "FFI-Symbol": symbol },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`${api}/${symbol} 返回非 JSON（HTTP ${response.status}）`);
-  }
-}
+import { post } from "./ffi.ts";
 
 function rows(payload: Json): Json[] {
   const data = payload?.data;

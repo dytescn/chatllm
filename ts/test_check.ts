@@ -7,7 +7,6 @@
 // 说明：脚本临时删除 ai_supplier，结束后恢复原值。
 //       check 不创建对话、不写消息，响应直接携带 content 与 route。
 
-const BASE = "http://127.0.0.1:44944";
 const INFO_DB = "./info";
 const SUPPLIER_KEY = "ai_supplier";
 const EXPECTED_TEXT = "请选择设置AI供应商";
@@ -28,19 +27,7 @@ function assert(cond: boolean, message: string) {
   }
 }
 
-async function post(api: string, symbol: string, body: Json = {}): Promise<Json> {
-  const response = await fetch(`${BASE}/${api}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/libary", "FFI-Symbol": symbol },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`${api}/${symbol} 返回非 JSON（HTTP ${response.status}）：${text}`);
-  }
-}
+import { post } from "./ffi.ts";
 
 function rows(payload: Json): Json[] {
   const data = payload?.data;
@@ -87,7 +74,7 @@ async function restoreSupplier(original: string | null): Promise<void> {
   }
   const result = await dbUpdate(
     `INSERT INTO setting (key, value) VALUES ('${esc(SUPPLIER_KEY)}', '${esc(original)}')
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;`,
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
   );
   if (result.code !== 200) {
     throw new Error(`恢复 ${SUPPLIER_KEY} 失败：${JSON.stringify(result)}`);
