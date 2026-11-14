@@ -2,17 +2,17 @@
 
 ## 近期
 
-- [ ] **think / reply 资源包安装**
-  - 将 `think_base` / `reply_base` 的 `prompts/*.json` 写入 `chat_think` / `chat_reply`；
+- [ ] **check 插件**
+  - 内置 check 已删除，供应商与 AppKey 校验改由 check 插件实现；
+  - 插件接入后按 `think → plugins → reply` 主流程执行。
+
+- [ ] **think_base 资源包安装**
+  - 将 `think_base` 的 `prompts/*.json` 写入 `chat_think`；
   - 提供可重复执行的安装与校验脚本。
 
 - [ ] **system_prompt 透传**
   - 当前只写入 `dialogue.system_prompt`；
   - 供应商调用时把对话级 system 传给模型。
-
-- [ ] **reply 清洗泛化**
-  - 当前清洗规则针对测试插件输出；
-  - 为真实插件输出补充通用清洗策略。
 
 ## 质量
 
@@ -27,7 +27,7 @@
   - 验收：用户输入不直接进入 SQL 字符串，补充转义/参数化测试。
 
 - [ ] **外部库路径可配置**
-  - 位置：`db.rs`、`designdb.rs`、`kv.rs`、`cloud.rs`、`markparse.rs`；
+  - 位置：`db.rs`、`designdb.rs`、`kv.rs`；
   - 现状：固定为 `./libary/*`；
   - 验收：支持环境变量或配置覆盖，缺失时返回明确错误。
 
@@ -56,13 +56,14 @@
 ## 已完成
 
 - [x] 对话消息迁移到 `designdb/<dialogue_id>`；
-- [x] `check → think → plugins → reply` 流程；
-- [x] 供应商配置缺失时直接返回 `/setting` 提示；
-- [x] 配置检查成功缓存，`info.db` 变化自动失效；
-- [x] 供应商（deepseek / siliconflow_t2t）统一走 `cloud`；
+- [x] `think → plugins → reply` 流程；`check` 已移除，待插件实现；
+- [x] 移除 `cloud` / `markparse` 依赖与模块；
+- [x] 过渡期：供应商配置缺失时返回 `/setting` 提示；
+- [x] 过渡期：配置检查成功缓存，`info.db` 变化自动失效；
+- [x] 移除 `cloud` / `markparse` 依赖与模块；供应商调用改为业务插件回调；
 - [x] reply 优先检索 `plugins_reply`，支持 `plugins_uid` 对话复用 / 创建；
-- [x] `reply_base` 资源包清洗与系统对话；
+- [x] 移除 `reply_base` 模块与系统对话写入；
 - [x] 64 KiB 输出缓冲区与 FFI 错误码；
-- [x] `call_chat`：按 kv 分类直接调用插件，跳过 think_base / reply；
+- [x] `chat_plugins` → taskflow → 回调的插件执行流程；移除 `post_call_chat` 对外接口；
 - [x] 插件库缓存复用（进程内常驻）与同线程重入保护；
-- [x] `call_chat` 单元测试与 `testenv` 冒烟测试。
+- [x] taskflow 元素解析单元测试。

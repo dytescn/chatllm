@@ -53,3 +53,9 @@ datasets
 
 # Local cargo source mirror
 .cargo/
+
+# dytes 测试环境
+.dytes/
+
+# 运行时安装的依赖库（由 dytes 安装）
+/libary/

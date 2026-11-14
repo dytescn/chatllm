@@ -147,7 +147,7 @@ async function ask(text: string): Promise<void> {
   }
   console.log(`AI > ${reply}`);
   if (reply.includes("no such table: setting")) {
-    console.log("     ↑ 请先初始化 info.db 的 setting 表（setting_ui/setup.ts 或 info_lib）");
+    console.log("     ↑ 请先初始化 info.db 的 setting 表（setting_ui/setup.ts）");
   }
 }
 
@@ -164,7 +164,7 @@ try {
 }
 
 console.log("对话已就绪：直接输入文字提问；/new 新对话，/history 查看历史，/exit 退出。\n");
-console.log("（终端中 [think] / [plugins] / [reply] / [reply_base] / [db] / [designdb] / [markparse] 行是阶段日志）\n");
+console.log("（终端中 [think] / [plugins] / [reply] / [reply_base] / [db] / [designdb] 行是阶段日志）\n");
 
 prompt("你 > ");
 let buffer = "";

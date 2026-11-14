@@ -1,8 +1,8 @@
 // src/ffi/chat.rs
 //
-// chatllm 对外只有三个 FFI 接口，调用约定见 `docs/ffi.md`：
+// chatllm 对话相关 FFI 接口，调用约定见 `docs/ffi.md`：
 // `int (*)(const char *json_in, char *json_out);`
-// 本层只做输入解析与错误码映射，业务逻辑在 `utils::dialogue`。
+// 本层只做输入解析与错误码映射，业务逻辑在 `utils::run_flow` / `utils::dialogue`。
 use crate::ffi::types::{ChatFlow, Dialogue, DialogueListReq, DialogueQuery};
 use crate::utils::cjson::{err_msg, read_body, write_error, write_success};
 use crate::utils::dialogue;

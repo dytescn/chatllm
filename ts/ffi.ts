@@ -43,7 +43,6 @@ function libFile(base: string, windows: string, macos: string, linux: string): s
 
 const chatllm = Deno.dlopen(libFile("chatllm", "chatllm.dll", "chatllm.dylib", "chatllm.so"), {
   post_chat: SYMBOLS,
-  post_call_chat: SYMBOLS,
   post_chat_detail: SYMBOLS,
   post_dialogue_list: SYMBOLS,
   post_dialogue_search: SYMBOLS,

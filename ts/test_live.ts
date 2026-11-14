@@ -16,8 +16,8 @@
 //
 // 说明：
 // - 脚本读取 token 后写入 testenv 的 info.db，不会打印 token；
-// - 使用 chat_plugin 指向供应商，走 cloud::chat_with 统一接口；
-// - 测试结束后恢复 ai_supplier、两个 AppKey、think-greeting、chat_plugin，
+// - 使用 chat_plugins 指向供应商插件，按 post_<callback> 调用；
+// - 测试结束后恢复 ai_supplier、两个 AppKey、think-greeting、chat_plugins，
 //   并归档测试对话。
 
 const INFO_DB = "./info";
@@ -31,7 +31,9 @@ const THINK_COLLECTION = "chat_think";
 const THINK_TEXT = "你好 问候 介绍 你是谁 在吗";
 
 const PLUGIN_KEY = "chat-plugin-do-test-chat";
-const PLUGIN_COLLECTION = "chat_plugin";
+const PLUGIN_COLLECTION = "chat_plugins";
+const PLUGIN_UUID = "00000000-0000-4000-8000-0000000000a1";
+// 需要 testenv/designdb/taskflow 中存在归属 PLUGIN_UUID、带 callback 的元素。
 
 type Json = Record<string, any>;
 
@@ -191,13 +193,14 @@ async function runSupplier(
     value: JSON.stringify({
       name: supplier,
       lib_name: supplier,
+      plugin_uuid: PLUGIN_UUID,
       ffi_symbol: "chat",
       category: "chat",
     }),
     value_type: "json",
     text: "测试查询词",
     rank: 1,
-    meta: { plugin: supplier, category: "chat" },
+    meta: { plugin: supplier, plugin_uuid: PLUGIN_UUID, category: "chat" },
   });
 
   const created = await post("chatllm", "chat", {
@@ -220,7 +223,7 @@ async function runSupplier(
 
   assert(reply.length > 0, "assistant 内容非空");
   assert(!reply.includes("请选择设置AI供应商"), "没有返回配置缺失提示");
-  assert(!reply.includes("插件处理失败"), "插件 / cloud 调用没有失败");
+  assert(!reply.includes("插件处理失败"), "插件调用没有失败");
   assert(!reply.includes("AI 配置错误"), "AppKey 已被供应商接受");
 }
 
@@ -245,7 +248,7 @@ async function main() {
   const originalPlugin = await kvGet(PLUGIN_COLLECTION, [PLUGIN_KEY]);
 
   try {
-    section("准备 think 与 chat_plugin");
+    section("准备 think 与 chat_plugins");
     await kvPut(THINK_COLLECTION, {
       key: THINK_KEY,
       value: "不应使用的片段|测试查询词",
@@ -307,9 +310,9 @@ async function main() {
           rank: originalPlugin.rank ?? 1,
           meta: originalPlugin.meta ?? { category: "chat" },
         });
-        assert(true, "chat_plugin 已恢复");
+        assert(true, "chat_plugins 已恢复");
       } catch (error) {
-        console.error("恢复 chat_plugin 失败：", error);
+        console.error("恢复 chat_plugins 失败：", error);
         failed += 1;
       }
     }

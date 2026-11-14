@@ -96,13 +96,74 @@ pub fn append_message(uuid: &str, role: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
-/// 读取某对话的全部消息（按 seq 升序），供续聊组装上下文。
-pub fn message_history(uuid: &str) -> Result<Vec<Value>> {
+/// 追加一条轮次记录（`role = "round"`），并同步对话计数。
+pub fn append_round(uuid: &str, content: Value) -> Result<()> {
+    println!("[message] append_round: uuid={}", uuid);
+    if !is_valid_uuid(uuid) {
+        bail!("非法 uuid: {}", uuid);
+    }
+
+    let rows = db_query(
+        DIALOGUE_DB,
+        &format!(
+            "SELECT last_seq, message_count FROM dialogue WHERE id = '{}' LIMIT 1",
+            uuid
+        ),
+    )?;
+    let Some(current) = rows.first() else {
+        bail!("对话不存在: {}", uuid);
+    };
+
+    let last_seq = as_i64(current.get("last_seq"), 0);
+    let seq = last_seq + 1;
+    let now = now_ms();
+    let message_id = uuid::Uuid::new_v4().to_string();
+
+    let doc = json!({
+        "_id": message_id,
+        "dialogue_id": uuid,
+        "seq": seq,
+        "role": "round",
+        "content": content,
+        "status": "ok",
+        "created_at": now,
+    });
+    designdb::insert(uuid, MESSAGES, doc).with_context(|| format!("写 {} 轮次记录失败", uuid))?;
+
+    db_update(
+        DIALOGUE_DB,
+        &format!(
+            "UPDATE dialogue
+             SET last_seq = {}, message_count = message_count + 1, updated_at = datetime('now')
+             WHERE id = '{}'",
+            seq, uuid
+        ),
+    )
+    .with_context(|| format!("刷新 {} 计数失败", uuid))?;
+
+    println!("[message] append_round 完成: uuid={}, seq={}", uuid, seq);
+    Ok(())
+}
+
+/// 读取对话中的全部文档（含轮次记录），按 seq 升序。
+fn query_all_messages(uuid: &str) -> Result<Vec<Value>> {
     if !is_valid_uuid(uuid) {
         bail!("非法 uuid: {}", uuid);
     }
     let mut all = designdb::query_all(uuid, MESSAGES, Some(json!({})), Some(json!({ "seq": 1 })))?;
     all.sort_by_key(|m| as_i64(m.get("seq"), 0));
+    Ok(all)
+}
+
+/// 读取某对话的 user / assistant 消息（按 seq 升序），供续聊组装上下文。
+pub fn message_history(uuid: &str) -> Result<Vec<Value>> {
+    let mut all = query_all_messages(uuid)?;
+    all.retain(|message| {
+        matches!(
+            message.get("role").and_then(Value::as_str),
+            Some("user") | Some("assistant")
+        )
+    });
     println!("[message] history: uuid={}, count={}", uuid, all.len());
     Ok(all)
 }
@@ -122,7 +183,7 @@ pub fn list_messages(
         bail!("非法 uuid: {}", uuid);
     }
     let limit = limit.unwrap_or(DEFAULT_MSG_LIMIT).clamp(1, MAX_MSG_LIMIT);
-    let all = message_history(uuid)?;
+    let all = query_all_messages(uuid)?;
 
     let seq_of = |m: &Value| as_i64(m.get("seq"), 0);
     let has_more_before;
@@ -150,13 +211,7 @@ pub fn list_messages(
         .into_iter()
         .map(|mut row| {
             if let Some(obj) = row.as_object_mut() {
-                let content = obj
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                let html = crate::utils::markparse::to_html(&content).unwrap_or_default();
-                obj.insert("content_html".to_string(), Value::String(html));
+                obj.insert("content_html".to_string(), Value::String(String::new()));
             }
             normalize_message(row)
         })

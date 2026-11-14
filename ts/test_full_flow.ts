@@ -1,8 +1,8 @@
 // ts/test_full_flow.ts
 // 完整对话流程测试：
-//   check → think(chat_think) → think_base uuid → 查询/创建对话
+//   think(chat_think) → think_base uuid → 查询/创建对话
 //   → skills 写入 system_prompt → user 消息
-//   → think value 按 | 拆分 → 每段查询 chat_plugin → 执行 do_test_chat
+//   → think value 按 | 拆分 → 每段查询 chat_plugins → 执行 taskflow 回调
 //   → 合并插件结果 → reply_sys_info → assistant
 //
 // 前置：
@@ -16,7 +16,9 @@
 const INFO_DB = "./info";
 const DIALOGUE_DB = "./dialogue";
 const THINK_COLLECTION = "chat_think";
-const PLUGIN_COLLECTION = "chat_plugin";
+const PLUGIN_COLLECTION = "chat_plugins";
+const PLUGIN_UUID = "00000000-0000-4000-8000-0000000000a1";
+// 需要 testenv/designdb/taskflow 中存在归属 PLUGIN_UUID、带 callback 的元素。
 const THINK_KEY = "think-base";
 const SUPPLIER_KEY = "ai_supplier";
 const TOKEN_KEY = "deepseek_app_key";
@@ -155,7 +157,7 @@ async function main() {
   let uuid = "";
 
   try {
-    section("1. 准备：供应商、think_base、chat_plugin");
+    section("1. 准备：供应商、think_base、chat_plugins");
     await setSetting(SUPPLIER_KEY, "deepseek");
     await setSetting(TOKEN_KEY, "test-token");
     await ensureCollection(THINK_COLLECTION, "思考");
@@ -183,13 +185,14 @@ async function main() {
         value: JSON.stringify({
           name: "do_test_chat",
           lib_name: "do_test_chat",
+          plugin_uuid: PLUGIN_UUID,
           ffi_symbol: "chat",
           category: "chat",
         }),
         value_type: "json",
         text,
         rank: 1,
-        meta: { plugin: "do_test_chat", category: "chat" },
+        meta: { plugin: "do_test_chat", plugin_uuid: PLUGIN_UUID, category: "chat" },
       });
     }
     assert(true, "think_base 与 do_test_chat 插件记录已写入");

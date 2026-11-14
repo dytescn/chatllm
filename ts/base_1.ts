@@ -4,7 +4,7 @@
 //
 // 前置：testenv/libary 已安装 chatllm 及依赖库（Deno FFI，无需启动 cyctron）。
 // 运行：deno run --allow-ffi --allow-read --allow-write --allow-env ts/base_1.ts
-// 说明：chat 写入 user 消息后按 check → think → plugins → reply 执行；
+// 说明：chat 写入 user 消息后按 think → plugins → reply 执行；
 //       assistant 内容取决于供应商、think 与插件配置。
 
 import { call, section, assert, summary } from "./client.ts";

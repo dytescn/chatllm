@@ -2,23 +2,22 @@
 //! 助手回复组装。
 //!
 //! reply 阶段接收 plugins 结果，优先检索 `chat_reply`，按命中的插件调用
-//! 供应商（cloud）或业务插件；对话 id 使用命中记录的 `plugins_uid`，不存在时创建。
-//! 未命中或调用失败时回退到 reply_base 清洗。
+//! 业务插件；对话 id 使用命中记录的 `plugins_uid`，不存在时创建。
+//! 未命中或调用失败时原样输出 plugins 结果。
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use crate::utils::cloud::{self, Supplier};
+use crate::utils::chat_plugins;
 use crate::utils::dialogue;
 use crate::utils::kv;
-use crate::utils::markparse;
 use crate::utils::message;
-use crate::utils::plugins;
-use crate::utils::reply_base;
 use crate::utils::think;
 
 /// reply 插件检索集合。
 pub const REPLY_COLLECTION: &str = "chat_reply";
+/// reply 阶段的默认分类检索关键词：先查 `base`，未命中再按输入检索。
+pub const BASE_KEYWORD: &str = "base";
 /// 检索返回条数。
 pub const TOP_K: i64 = 5;
 
@@ -47,7 +46,7 @@ pub struct Reply {
     pub html: String,
     /// 是否由 `chat_reply` 命中插件生成。
     pub used_reply_plugin: bool,
-    /// 是否命中 `chat_reply` 资源（reply_base），但未命中可调用插件。
+    /// 是否命中 `chat_reply` 资源（无插件）。
     pub resource_hit: bool,
 }
 
@@ -55,7 +54,7 @@ impl Reply {
     /// 从正文与可选思考内容构造。
     pub fn new(content: &str, think: Option<String>) -> Self {
         let content = content.trim().to_string();
-        let html = markparse::to_html(&content).unwrap_or_default();
+        let html = String::new();
         println!(
             "[reply] Reply::new: content={:?}, html_len={}, think={:?}",
             preview(&content, 300),
@@ -73,7 +72,7 @@ impl Reply {
 
     /// 使用 plugins 结果生成回复。
     ///
-    /// 先尝试 `chat_reply`；未命中或失败时使用 reply_base 清洗。
+    /// 先尝试 `chat_reply`；未命中或失败时原样返回 plugins 结果。
     pub fn from_result(result: Option<String>, input: &str) -> Self {
         println!(
             "[reply] from_result 输入: prompt={:?}, result={:?}",
@@ -86,14 +85,7 @@ impl Reply {
                 if let Some(reply) = plugin_reply {
                     return reply;
                 }
-                let content = match reply_base::process(&value) {
-                    Some(cleaned) => cleaned,
-                    None => {
-                        println!("[reply] reply_base 不可用，回退原始 plugins 结果");
-                        value
-                    }
-                };
-                (content, resource_hit)
+                (value, resource_hit)
             }
             _ => (fallback(None, input), false),
         };
@@ -115,14 +107,42 @@ pub fn find(input: &str, top_k: i64) -> Result<Option<ReplyHit>> {
 }
 
 /// 检索 `chat_reply`，同时区分「插件命中」与「资源命中」。
+///
+/// 默认分类优先：先按 [`BASE_KEYWORD`] 检索，未命中时再按输入内容检索。
 fn find_hit(input: &str, top_k: i64) -> Result<(Option<ReplyHit>, bool)> {
+    let queries: Vec<&str> = if input.trim() == BASE_KEYWORD {
+        vec![BASE_KEYWORD]
+    } else {
+        vec![BASE_KEYWORD, input]
+    };
+
+    let mut resource_hit = false;
+    for query in queries {
+        let (hit, hit_resource) = search_reply(query, top_k)?;
+        resource_hit |= hit_resource;
+        if hit.is_some() {
+            return Ok((hit, resource_hit));
+        }
+    }
+    Ok((None, resource_hit))
+}
+
+/// 单次 `chat_reply` 检索。
+fn search_reply(query: &str, top_k: i64) -> Result<(Option<ReplyHit>, bool)> {
     println!(
         "[reply] find 输入: query={:?}, collection={}, top_k={}",
-        preview(input, 300),
+        preview(query, 300),
         REPLY_COLLECTION,
         top_k
     );
-    let data = kv::search(REPLY_COLLECTION, input, top_k, kv::match_min_score(), None, true)?;
+    let data = kv::search(
+        REPLY_COLLECTION,
+        query,
+        top_k,
+        kv::match_min_score(),
+        None,
+        true,
+    )?;
     let list = data
         .get("list")
         .and_then(Value::as_array)
@@ -158,7 +178,7 @@ fn parsed_value(hit: &Value) -> Option<Value> {
 }
 
 /// 资源命中：有 plugin_name / kind，但没有可调用插件。
-fn is_resource_hit(hit: &Value) -> bool {
+pub fn is_resource_hit(hit: &Value) -> bool {
     let meta = hit.get("meta");
     let value = parsed_value(hit);
     let plugin = str_at(meta, "plugin")
@@ -213,7 +233,7 @@ fn reply_with_plugin(input: &str) -> (Option<Reply>, bool) {
     let (hit, resource_hit) = match find_hit(input, TOP_K) {
         Ok((Some(hit), resource_hit)) => (hit, resource_hit),
         Ok((None, true)) => {
-            println!("[reply] chat_reply 资源命中（reply_base），回退 reply_base");
+            println!("[reply] chat_reply 资源命中但无插件，原样输出");
             return (None, true);
         }
         Ok((None, false)) => {
@@ -227,49 +247,17 @@ fn reply_with_plugin(input: &str) -> (Option<Reply>, bool) {
     };
 
     let dialogue_id = ensure_dialogue(hit.plugins_uid.as_deref(), hit.plugin_name.as_deref());
-    let history = dialogue_id
-        .as_deref()
-        .and_then(|id| match message::message_history(id) {
-            Ok(history) => Some(history),
-            Err(error) => {
-                println!("[reply] 读取对话历史失败: {:#}", error);
-                None
-            }
-        })
-        .unwrap_or_default();
 
-    let content = match Supplier::from_exact_code(&hit.plugin) {
-        Some(supplier) => {
-            let mut messages = Vec::new();
-            if let Some(system) = hit.plugin_name.as_deref().and_then(think::skills_for) {
-                messages.push(json!({ "role": "system", "content": system }));
-            }
-            messages.extend(history);
-            messages.push(json!({ "role": "user", "content": input }));
-            println!(
-                "[reply] 供应商调用: supplier={:?}, messages={}",
-                supplier,
-                messages.len()
-            );
-            match cloud::chat_with(supplier, input, &messages) {
-                Ok(reply) => reply.content,
-                Err(error) => {
-                    println!("[reply] 供应商调用失败: {:#}", error);
-                    return (None, resource_hit);
-                }
-            }
+    let content = match chat_plugins::call_plugin(&hit.plugin, &hit.ffi_symbol, input) {
+        Ok(content) => content,
+        Err(error) => {
+            println!("[reply] 插件调用失败: {:#}", error);
+            return (None, resource_hit);
         }
-        None => match plugins::call_plugin(&hit.plugin, &hit.ffi_symbol, input) {
-            Ok(content) => content,
-            Err(error) => {
-                println!("[reply] 插件调用失败: {:#}", error);
-                return (None, resource_hit);
-            }
-        },
     };
 
     if content.trim().is_empty() {
-        println!("[reply] 插件返回空内容，回退 reply_base");
+        println!("[reply] 插件返回空内容，原样输出");
         return (None, resource_hit);
     }
 
@@ -290,7 +278,7 @@ fn reply_with_plugin(input: &str) -> (Option<Reply>, bool) {
 
 /// 使用 `plugins_uid` 的对话；不存在或没有 uid 时创建。
 fn ensure_dialogue(plugins_uid: Option<&str>, plugin_name: Option<&str>) -> Option<String> {
-    let system = plugin_name.and_then(think::skills_for);
+    let system = plugin_name.and_then(|name| think::skills_for(None, Some(name)));
     let title = "reply 系统对话";
 
     if let Some(id) = plugins_uid.map(str::trim).filter(|id| !id.is_empty()) {
@@ -335,66 +323,4 @@ fn preview(value: &str, max: usize) -> String {
         out.push(ch);
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_chat_reply_from_meta() {
-        let hit = json!({
-            "key": "reply-base",
-            "meta": {
-                "plugin": "deepseek",
-                "ffi_symbol": "chat",
-                "plugins_uid": "6f2b8d41-9c3a-4e7b-8d5f-1a2c3e4b5d60",
-                "plugin_name": "reply_base"
-            }
-        });
-        let parsed = parse_hit(&hit).expect("应解析成功");
-        assert_eq!(parsed.plugin, "deepseek");
-        assert_eq!(parsed.ffi_symbol, "chat");
-        assert_eq!(parsed.plugin_name.as_deref(), Some("reply_base"));
-        assert_eq!(
-            parsed.plugins_uid.as_deref(),
-            Some("6f2b8d41-9c3a-4e7b-8d5f-1a2c3e4b5d60")
-        );
-    }
-
-    #[test]
-    fn parses_chat_reply_from_value() {
-        let hit = json!({
-            "key": "reply-value",
-            "value": "{\"lib_name\":\"siliconflow_t2t\",\"plugin_uuid\":\"6f2b8d41-9c3a-4e7b-8d5f-1a2c3e4b5d60\",\"plugin_name\":\"reply_base\"}"
-        });
-        let parsed = parse_hit(&hit).expect("应解析成功");
-        assert_eq!(parsed.plugin, "siliconflow_t2t");
-        assert_eq!(parsed.ffi_symbol, "chat");
-        assert!(parsed.plugins_uid.is_some());
-    }
-
-    #[test]
-    fn rejects_chat_reply_without_plugin() {
-        assert!(parse_hit(&json!({ "key": "empty" })).is_none());
-    }
-
-    #[test]
-    fn reply_collection_is_chat_reply() {
-        assert_eq!(REPLY_COLLECTION, "chat_reply");
-    }
-
-    #[test]
-    fn detects_resource_hit_without_plugin() {
-        let hit = json!({
-            "key": "reply-base:skill:main",
-            "meta": {
-                "plugin_name": "reply_base",
-                "kind": "skill",
-                "plugin_uuid": "6f2b8d41-9c3a-4e7b-8d5f-1a2c3e4b5d60"
-            }
-        });
-        assert!(is_resource_hit(&hit));
-        assert!(parse_hit(&hit).is_none());
-    }
 }

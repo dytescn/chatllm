@@ -1,7 +1,7 @@
 // ts/test_pipeline.ts
 // 测试 AI 供应商配置与完整流程：
-//   1. 供应商已选但 AppKey 未配置 → assistant 返回设置提示 + /setting
-//   2. 配置 AppKey 后执行 check → think → plugins → reply
+//   1. 配置供应商与 AppKey 并创建对话
+//   2. 执行 think → plugins → reply
 //
 // 前置：
 //   1. testenv 已启动：cd testenv && ./cyctron.exe start
@@ -14,7 +14,8 @@
 // 说明：
 // - 临时设置 ai_supplier=deepseek，并先删除 deepseek_app_key；
 // - 第二阶段写入测试用 deepseek_app_key，并使用 reply_sys_info 作为
-//   chat_plugin，避免依赖真实供应商网络；
+//   chat_plugins，避免依赖真实供应商网络；
+// - 需要 testenv/designdb/taskflow 中存在归属该 plugin_uuid、带 callback 的元素；
 // - 临时改 think-greeting 的 value，测试后恢复；
 // - 结束后恢复 ai_supplier、deepseek_app_key、think-greeting，并归档测试对话。
 
@@ -23,7 +24,8 @@ const SUPPLIER_KEY = "ai_supplier";
 const TOKEN_KEY = "deepseek_app_key";
 const THINK_KEY = "think-greeting";
 const PLUGIN_KEY = "chat-plugin-do-test-chat";
-const PLUGIN_COLLECTION = "chat_plugin";
+const PLUGIN_COLLECTION = "chat_plugins";
+const PLUGIN_UUID = "00000000-0000-4000-8000-0000000000a1";
 const THINK_COLLECTION = "chat_think";
 const THINK_TEXT = "你好 问候 介绍 你是谁 在吗";
 
@@ -163,34 +165,25 @@ async function main() {
   );
 
   try {
-    section("1. 供应商已选但 AppKey 未配置");
+    section("1. 配置供应商并创建对话");
     await setSetting(SUPPLIER_KEY, "deepseek");
-    await deleteSetting(TOKEN_KEY);
-    assert((await readSetting(TOKEN_KEY)) === null, "deepseek_app_key 已删除");
+    await setSetting(TOKEN_KEY, "test-token");
+    assert((await readSetting(TOKEN_KEY)) === "test-token", "deepseek_app_key 已配置");
 
-    const blocked = await post("chatllm", "chat", {
+    const created = await post("chatllm", "chat", {
       prompt,
       title: `test_pipeline-${stamp}`,
     });
-    console.log(blocked);
-    assert(blocked.code === 200, "chat 返回 200");
-    assert(blocked.data?.route === "/setting", "route = /setting");
-    uuid = String(blocked.data?.uuid ?? "");
+    console.log(created);
+    assert(created.code === 200, "chat 返回 200");
+    uuid = String(created.data?.uuid ?? "");
     assert(uuid.length === 36, "返回合法 uuid");
 
-    const blockedDetail = await post("chatllm", "chat_detail", { uuid, limit: 20 });
-    const blockedReplies = assistantContents(blockedDetail);
-    assert(blockedReplies.length === 1, "写入 1 条 assistant 消息");
-    assert(
-      (blockedReplies[0] ?? "").includes("请选择设置AI供应商"),
-      "assistant 提示配置供应商 / AppKey",
-    );
-    assert(
-      (blockedReplies[0] ?? "").includes("/setting"),
-      "assistant 包含 /setting",
-    );
+    const createdDetail = await post("chatllm", "chat_detail", { uuid, limit: 20 });
+    const createdReplies = assistantContents(createdDetail);
+    assert(createdReplies.length === 1, "写入 1 条 assistant 消息");
 
-    section("2. 配置 AppKey 后执行 check → think → plugins → reply");
+    section("2. 执行 think → plugins → reply");
     await setSetting(TOKEN_KEY, "test-token");
     assert((await readSetting(TOKEN_KEY)) === "test-token", "deepseek_app_key 已配置");
 
@@ -210,15 +203,16 @@ async function main() {
       value: JSON.stringify({
         name: "reply_sys_info",
         lib_name: "reply_sys_info",
+        plugin_uuid: PLUGIN_UUID,
         ffi_symbol: "chat",
         category: "chat",
       }),
       value_type: "json",
       text: "测试查询词",
       rank: 1,
-      meta: { plugin: "reply_sys_info", category: "chat" },
+      meta: { plugin: "reply_sys_info", plugin_uuid: PLUGIN_UUID, category: "chat" },
     });
-    assert(true, "chat_plugin 已写入 reply_sys_info");
+    assert(true, "chat_plugins 已写入 reply_sys_info");
 
     const continued = await post("chatllm", "chat", { prompt, uuid });
     console.log(continued);

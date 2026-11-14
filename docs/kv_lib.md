@@ -1,321 +1,264 @@
-# kv_lib 调用方式
+# kv_lib FFI 调用方式
 
-> 适用：`kv_lib` 0.1.0，chatllm 1.0.8
-> 上游完整接口见 `dytes_sys_operations/sysinfo/sys/kv_lib/ffi.md`；本文只整理
-> chatllm 侧会用到的调用方式。
+chatllm 通过 `dlopen ./libary/kv_lib.dll` 直接调用 kv_lib 的 FFI 符号，
+不经过 cyctron 的 HTTP 层。当前依赖版本以 `dytes.json` 为准
+（`kv_lib: 0.1.5`）。
 
-## 1. 定位
+## 1. 调用约定
 
-`kv_lib` 是通用键值 + 向量检索库，数据落在 `database/kv.db` 与
-`database/kv_<collection>_<n>.db`。chatllm 有两条调用路径：
+kv_lib 0.1.5 是 Rust 编译的 `cdylib`，导出 3 个 C ABI 函数：
 
-| 场景 | 调用方 | 方式 |
-| --- | --- | --- |
-| 宿主 / UI 主动检索插件 | 宿主 | `POST /kv_lib` + `FFI-Symbol: kv_*` |
-| chatllm 内部需要检索 | chatllm | `src/utils/kv.rs` 直接 `dlopen ./libary/kv_lib.dll` |
-
-两条路径读写同一份数据，不会重复初始化。
-
-## 2. 调用约定
-
-### 2.1 HTTP
-
-```http
-POST http://127.0.0.1:44944/kv_lib
-Content-Type: application/libary
-FFI-Symbol: kv_search
-
-{ "collection": "plugin", "query": "导出 PDF", "top_k": 5 }
-```
-
-cyctron 会把 `kv_*` 拼成导出函数 `post_kv_*`；`FFI-Symbol` 不带 `post_` 前缀。
-
-### 2.2 C ABI
+| 符号 | 用途 |
+| --- | --- |
+| `kv_collection` | 集合列表、统计 |
+| `kv_embed` | 文本组写入与向量化、重建索引 / 分片统计 / 文本哈希 |
+| `kv_search` | 按 `query` 文本检索 |
 
 ```c
-int post_kv_search(const char *json_in, char *json_out);
+int kv_xxx(const char *json_in, char *json_out);
 ```
 
-| 项 | 约定 |
-| --- | --- |
-| 输入 | NUL 结尾 UTF-8 JSON |
-| 输出 | 调用方提供 65,536 字节缓冲区（含结尾 NUL） |
-| 返回值 | `0` 已写入；`-1` 输出指针为空；`-2` 输出超 64 KiB |
-| 业务状态 | 看响应体 `code`，不看 HTTP 状态码 |
-| 响应包络 | `{"code":200,"data":{...},"msg":"success"}` |
+- `json_in`：NUL 结尾的 UTF-8 JSON 请求；空字符串按 `{}` 处理。
+- `json_out`：调用方提供的缓冲区；`kv_search` 至少 1 MiB，其余接口至少 64 KiB。
+- 返回值：`0` 已写入响应；`-1` `json_out` 为空指针；`-2` 响应达到缓冲上限、未写入。
+- 业务错误放在响应的 `code` 字段中，不用负数返回值表达。
 
-## 3. 集合
-
-首次调用会自动创建 `database/kv.db` 并初始化四个集合：
-
-| code | 名称 | 用途 |
-| --- | --- | --- |
-| `prompt` | 提示词 | system prompt 模板、规则与提示词条目 |
-| `plugin` | 插件能力 | 插件能力描述向量（chatllm 检索插件用这个） |
-| `skill` | 技能 | 技能正文向量 |
-| `material` | 素材 | 素材内容文本向量 |
-| `chat_plugin` | 聊天插件 | chat 分类插件的能力描述向量；`chat` 流程检索此集合，首次使用时自动创建 |
-
-`prompt / plugin / skill / material` 由 kv_lib 首次初始化时自动建好；
-`chat_plugin` 由 `ensure_chat_plugin_collection()`（或任意调用方）按需创建。
-
-集合默认 `dim = 1024`、`model = qwen3-embed`，不要手工改 `dim`。
-
-## 4. Rust 封装
-
-实现：`src/utils/kv.rs`。首次调用时加载 `./libary/kv_lib.dll`（Linux
-`./libary/kv_lib.so`），之后复用同一个 `Library`。
-
-| 函数 | 对应 FFI | 说明 |
-| --- | --- | --- |
-| `call_ffi(symbol, &request)` | 任意 `post_kv_*` | 通用入口，返回响应 `data` |
-| `collection_list(page, page_size)` | `kv_collection`（`action=list`） | 集合列表与统计 |
-| `get(collection, keys, with_vector)` | `kv_record`（`action=get`） | 按键读取记录 |
-| `put(collection, items)` | `kv_record`（`action=put`） | 批量写入 / 更新，按 `text` 生成向量 |
-| `list(collection, prefix, page, page_size)` | `kv_record`（`action=list`） | 分页扫描 |
-| `search(collection, query, top_k, min_score, candidate_keys, with_value)` | `kv_search` | 文本相似度检索 |
-| `search_plugins(query, top_k)` | `kv_search` | 固定 `collection=plugin`，返回候选数组 |
-| `collection_put(code, name, description, sort)` | `kv_collection`（`action=put`） | 创建 / 更新集合 |
-| `ensure_chat_plugin_collection()` | `kv_collection`（`action=put`） | 确保 `chat_plugin` 存在 |
-| `search_chat_plugins(query, top_k)` | `kv_search` | 固定 `collection=chat_plugin`，返回候选数组 |
-| `embed(collection, keys, limit, offset, force)` | `kv_embed`（`action=embed`） | 补齐 / 刷新向量 |
-| `stats(collection)` | `kv_collection`（`action=stats`） | 集合 / 分片 / 索引统计 |
-
-### 4.1 检索聊天插件
-
-```rust
-use crate::utils::kv;
-
-let hits = kv::search_chat_plugins("帮我选一个聊天模型", 5)?;
-for hit in hits {
-    let key = hit["key"].as_str().unwrap_or("");
-    let score = hit["score"].as_f64().unwrap_or(0.0);
-    let meta = &hit["value"]; // 插件元数据 JSON 字符串
-    eprintln!("{} {:.4} {}", key, score, meta);
-}
-```
-
-`search_chat_plugins` 会先确保 `chat_plugin` 集合存在，再执行
-`kv_search`；`chat` 流程内部使用该函数。
-
-### 4.2 写入聊天插件能力
-
-真实数据由 `plugin_lib` 同步；测试或联调时可手工写入：
-
-```rust
-use serde_json::json;
-use crate::utils::kv;
-
-kv::put("chat_plugin", &[json!({
-    "key": "chat-plugin-deepseek",
-    "value": "{\"name\":\"DeepSeek\",\"lib_name\":\"libdeepseek\",\"ffi_symbol\":\"chat\"}",
-    "value_type": "json",
-    "text": "DeepSeek 文本对话模型，适合通用聊天与推理",
-    "rank": 1,
-    "meta": { "plugin": "deepseek", "category": "chat" }
-})])?;
-```
-
-`text` 是向量化源文本；相同文本会跳过（`skipped`），不重复生成向量。
-`rank` 是业务排名，数值越小越靠前，`0` 表示未排名。
-
-### 4.3 错误处理
-
-- FFI 返回 `-2` → `kv_lib <symbol> 输出超过 64 KiB`
-- 业务 `code != 200` → `kv_lib <symbol> 错误 (code=..., msg=...)`
-- 响应非 UTF-8 / 非法 JSON → 带原始响应的上下文错误
-
-调用方按普通 `anyhow::Result` 处理；检索失败时可降级为“无候选”。
-
-## 5. 常用 HTTP 调用
-
-以下命令均以 testenv 为例（`127.0.0.1:44944`）。
-
-### 5.1 集合列表
-
-```bash
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection" \
-  -d '{"action":"list","page":1,"page_size":20}'
-```
-
-### 5.2 创建 chat_plugin 并写入聊天插件
-
-```bash
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection" \
-  -d '{"action":"put","code":"chat_plugin","name":"聊天插件","dim":1024,"model":"qwen3-embed"}'
-```
-
-```bash
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_record" \
-  -d '{
-    "action": "put",
-    "collection": "chat_plugin",
-    "items": [{
-      "key": "chat-plugin-deepseek",
-      "value": "{\"name\":\"DeepSeek\",\"lib_name\":\"libdeepseek\",\"ffi_symbol\":\"chat\"}",
-      "value_type": "json",
-      "text": "DeepSeek 文本对话模型，适合通用聊天与推理",
-      "rank": 1,
-      "meta": {"plugin": "deepseek", "category": "chat"}
-    }]
-  }'
-```
-
-响应：
+响应统一为 `{code, data, msg}`，成功 `code = 200`：
 
 ```json
-{ "code": 200, "data": { "written": 1, "skipped": 0, "failed": 0, "model": "qwen3-embed", "dim": 1024 } }
+{"code":200,"data":{...},"msg":"success"}
 ```
 
-### 5.3 检索聊天插件
+`action` 默认值与可用值：
 
-```bash
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_search" \
-  -d '{"collection":"chat_plugin","query":"帮我选一个聊天模型","top_k":3,"with_value":true}'
+| 符号 | 默认 `action` | 可用 `action` |
+| --- | --- | --- |
+| `kv_collection` | `list` | `list` / `stats` |
+| `kv_embed` | `embed` | `embed` / `rebuild` |
+| `kv_search` | 无 | 总是执行检索 |
+
+未知 `action` 返回 `400102`。
+
+## 2. 集合
+
+kv_lib 使用内置 SQLite（`rusqlite`），数据库文件位于 `KV_DB_DIR`
+（默认 `./database`）。初始化时写入 4 个默认集合：
+
+| code | 名称 | 用途 | sort |
+| --- | --- | --- | --- |
+| `prompt` | 提示词 | system prompt 模板、规则与提示词条目 | 10 |
+| `plugin` | 插件能力 | 插件能力描述向量 | 20 |
+| `skill` | 技能 | 技能正文向量 | 30 |
+| `material` | 素材 | 素材内容文本向量 | 40 |
+
+默认参数：`dim = 1024`、`model = qwen3-embed`、`shard_max_mb = 16`、
+`index_min_rows = 0`、`state = 0`（启用）。
+
+chatllm 对话流程另用 3 个业务集合，由插件安装流程调用 `kv_embed` 时按需创建：
+
+| code | 用途 |
+| --- | --- |
+| `chat_think` | think 阶段检索（`init` 关键词） |
+| `chat_plugins` | chat_plugins 阶段逐条检索 |
+| `chat_reply` | reply 阶段检索 |
+
+0.1.5 的 FFI **不再暴露记录 CRUD**：集合与记录的创建、更新、删除由内部流程
+（`kv_embed` 或宿主）维护，FFI 只提供列表、统计、向量化与检索。
+
+## 3. `kv_collection`
+
+### action = `list`
+
+```json
+{"action":"list","page":1,"page_size":20}
 ```
 
-响应（实测，按 rank 升序）：
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `page` | 1 | 页码，最小 1 |
+| `page_size` | 20 | 每页数量，1..=100 |
+
+响应 `data`：
 
 ```json
 {
-  "code": 200,
-  "data": {
-    "collection": "chat_plugin",
-    "model": "qwen3-embed",
-    "dim": 1024,
-    "list": [
-      { "key": "chat-plugin-deepseek", "rank": 1, "score": 0.6965,
-        "value": "{\"name\":\"DeepSeek\",\"lib_name\":\"libdeepseek\",\"ffi_symbol\":\"chat\"}" },
-      { "key": "chat-plugin-siliconflow", "rank": 2, "score": 0.6948 },
-      { "key": "chat-plugin-do-test-chat", "rank": 3, "score": 0.5705 }
-    ]
-  }
+  "list": [{
+    "code":"prompt","name":"提示词","description":"system prompt 模板、规则与提示词条目",
+    "dim":1024,"model":"qwen3-embed","shard_max_mb":16,"index_min_rows":0,
+    "state":0,"sort":10,"generation":4,
+    "row_count":4,"shard_count":1,"size_bytes":24576,
+    "created_at":"2026-11-14 09:15:08","updated_at":"2026-11-14 09:15:08"
+  }],
+  "page":1,"page_size":20,"total":4
 }
 ```
 
-**排序规则**：`rank` 升序优先（`0` / 负数视为未排名，排在最后），
-同 rank 再按 `score` 降序、`key` 升序。`kv_record`（`action=list`）使用相同规则；
-`kv_record`（`action=get`）每条记录也会返回 `rank`。
+`row_count` / `size_bytes` 来自 `kv_shard` 缓存，可能不是实时值。
 
-参数：
+### action = `stats`
 
-| 字段 | 说明 |
+```json
+{"action":"stats"}
+{"action":"stats","collection":"prompt"}
+```
+
+响应 `data`：
+
+```json
+{
+  "collections":[{"code":"prompt","rows":4,"vectors":3,"shards":1,
+                  "size_bytes":24576,"generation":4,
+                  "index":"fresh"}],
+  "totals":{"collections":1,"shards":1,"rows":4,"vectors":3,"size_bytes":24576},
+  "index":{"cached":1,"stale":0}
+}
+```
+
+单集合 `index` 取值：`fresh`（索引缓存命中）/ `stale`（有数据但当前
+generation 未缓存）/ `none`（没有可用索引数据）。
+
+## 4. `kv_embed`
+
+### action = `embed`：文本组写入与向量化
+
+```json
+{"action":"embed","collection":"chat_plugins","id":"550e8400-e29b-41d4-a716-446655440000","texts":["文字内容1","文字内容2"]}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `collection` | 是 | 集合编码；不存在时按嵌入器维度 / 模型自动创建 |
+| `id` | 是 | 文本组唯一编号，推荐 UUID；不能含 `:`；作为记录 key 前缀 |
+| `texts` | 是 | 文本数组，≤500 条，单条 ≤64 KiB；空数组表示清空该组 |
+
+内部流程：
+
+1. 校验 `collection` 与 `id`；
+2. 集合不存在时自动创建（`dim=1024`、`model=qwen3-embed`，其余用默认值）；
+3. 删除 key 以 `{id}:` 开头的旧记录；
+4. 为每条文本写入 `{id}:{index}`，`value` 与 `text` 均为文本内容并生成向量。
+
+删除与写入顺序执行、非事务；写入失败时旧组已被删除。空 `texts` 只执行删除。
+
+响应 `data`：
+
+```json
+{
+  "collection":"chat_plugins","id":"550e8400-...",
+  "deleted":2,"written":2,"skipped":0,"failed":0,
+  "errors":[],"model":"qwen3-embed","dim":1024,"elapsed_ms":1234
+}
+```
+
+`errors` 条目格式为 `{"key":"...","code":400602,"message":"..."}`。嵌入失败时
+记录可能以无向量状态写入，调用方需检查 `errors`。
+
+### action = `rebuild`
+
+```json
+{"action":"rebuild","collection":"plugin","target":"index","force":false}
+```
+
+| `target` | 行为 |
 | --- | --- |
-| `query` | 用户指令；由库内 qwen3-embed 编码 |
-| `vector` | 与 `query` 二选一，十六进制 f32 向量 |
-| `top_k` | 默认 5，上限 100 |
-| `min_score` | 默认 0，按余弦分数过滤 |
-| `candidate_keys` | 可选，先由 `plugin_lib` 元数据筛选再点查 |
-| `with_value` | `true` 时返回 `value` / `meta` |
+| `index`（默认） | 清空集合索引缓存；`force=true` 时立即重建 |
+| `shards` | 刷新所有非 `state=2` 分片的 `row_count` / `size_bytes` |
+| `text_hash` | 按当前 `text` 重算非空文本的 `text_hash` |
 
-### 5.4 读取记录
+响应 `data`：`{"collection":"plugin","action":"index","rebuilt":true,"processed":0,"elapsed_ms":12}`。
 
-```bash
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_record" \
-  -d '{"action":"get","collection":"chat_plugin","keys":["chat-plugin-deepseek"]}'
+## 5. `kv_search`
+
+```json
+{"collection":"chat_plugins","query":"聊天","top_k":5,"min_score":0.0,"with_value":true}
 ```
 
-### 5.5 扫描 / 统计 / 补向量
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `collection` | — | 必填 |
+| `query` | — | 查询文本，必填，会 trim |
+| `top_k` | 5 | 结果数量，1..=100 |
+| `min_score` | 0.0 | 最低相似度（点积） |
+| `candidate_keys` | — | 只在这些 key 中检索 |
+| `with_value` | false | 为 true 时补充 `value` / `value_type` / `meta` |
 
-```bash
-# 分页扫描
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_record" \
-  -d '{"action":"list","collection":"chat_plugin","page":1,"page_size":20}'
+0.1.5 不再支持 `vector` 参数；请求中出现 `vector` 返回 `400603`。
 
-# 集合统计
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_collection" \
-  -d '{"action":"stats","collection":"chat_plugin"}'
+响应 `data`：
 
-# 为文本非空的记录补向量
-curl -s -X POST http://127.0.0.1:44944/kv_lib \
-  -H "Content-Type: application/libary" -H "FFI-Symbol: kv_embed" \
-  -d '{"action":"embed","collection":"chat_plugin","limit":100,"force":false}'
+```json
+{
+  "collection":"chat_plugins","model":"qwen3-embed","dim":1024,
+  "query":"聊天","top_k":5,
+  "list":[{"key":"chat-plugin-demo","score":0.93,"rank":1,
+           "value":"...","value_type":"json","meta":{}}]
+}
 ```
 
-## 6. chat_think / chat_plugin 在对话流程中的位置
+排序：`score` 降序 → `rank`（正数升序，`0` 未排名置后）→ `key`。
+集合不存在时返回 `400600`，业务侧通常按“无命中”处理。
+
+## 6. 在对话流程中的位置
 
 ```text
-用户输入
-  │
-  ├─ POST /chatllm  chat
-  │     1. 写 user 消息
-  │     2. check：读取 ai_supplier 与对应 AppKey
-  │          供应商缺失 / AppKey 缺失 → assistant：请选择设置AI供应商并配置 AppKey + route=/setting
-  │     3. think：kv_search(collection=chat_think, query=用户输入)
-  │          按 "|" 拆分为数组
-  │     4. plugins：逐段 kv_search(collection=chat_plugin, query=片段)
-  │          命中 → 调用 Top1 插件
-  │          供应商类插件（deepseek / siliconflow_t2t）→ cloud::chat_with → cloud_lib
-  │          未命中 → 跳过该段
-  │     5. reply：合并插件结果 → 检索 chat_reply → 插件调用 cloud → assistant 最终内容
-  │
-  ├─ POST /chatllm  call_chat
-  │     kv_search(collection = category, query = prompts) → 调用 Top1 插件
-  │     插件请求：{ plugins_uid, category, prompts, context }
-  │     返回插件 data；不经过 check / think / reply
-  │
-  └─ chat_detail 读取 user + assistant
+chat
+  ├─ think：search(chat_think, "base") → 命中插件并回调，结果交给 chat_plugins
+  ├─ plugins：search(chat_plugins, think 的 Top1 value) → plugin_uuid → taskflow → 回调
+  └─ reply：search(chat_reply, 合并结果) → 插件 / 资源命中，否则原样输出
 ```
 
-- think 未命中或分割后没有有效段时，跳过插件，直接把用户 prompt 交给 reply；
-- plugins 失败时，把错误文本作为结果交给 reply；
-- 供应商类插件由 `src/utils/cloud.rs` 统一调用独立系统库 `cloud_lib`；示例中的
-  `lib_name` 仅作为插件标识，实际不会加载 `libdeepseek` / `libsiliconflow_t2t`；
-- `ai_supplier` 或 AppKey 缺失时，check 阶段直接返回设置提示，不进入后续流程。
+think 用默认分类关键词 `base` 检索 `chat_think`；reply 先按 `base` 检索 `chat_reply`，未命中时原样输出合并结果。
 
-完整可执行流程见 `runflow/base.md`；think 命中后把 `|` 拆分出的数组逐段查询插件，
-合并结果交给 reply。
+## 7. Rust 封装
 
-## 7. 模型与存储
+实现：`src/utils/kv.rs`，统一经 `call_ffi(symbol, request)` 调用。
 
-| 项 | 位置 |
-| --- | --- |
-| 模型 | `./models/qwen3-embed/qwen3-embedding-0.6.gguf` |
-| 模型覆盖 | 环境变量 `KV_EMBED_MODEL=<gguf 绝对路径>` |
-| 元数据库 | `database/kv.db`（`kv_collection` / `kv_shard`） |
-| 集合分片 | `database/kv_<collection>_<n>.db`（`kv_record`） |
+| 函数 | FFI | 说明 |
+| --- | --- | --- |
+| `search(collection, query, top_k, min_score, candidate_keys, with_value)` | `kv_search` | 文本检索；`top_k` 夹到 1..=100 |
+| `search_chat(query, top_k)` | `kv_search` | `chat` 集合检索 |
+| `search_plugins(query, top_k)` | `kv_search` | `plugin` 集合检索 |
+| `search_chat_plugins(query, top_k)` | `kv_search` | `chat_plugins`；集合不存在返回空 |
+| `collection_list(page, page_size)` | `kv_collection` | `action = list` |
+| `stats(collection)` | `kv_collection` | `action = stats` |
+| `call_ffi(symbol, request)` | `kv_<symbol>` | 通用调用，64 KiB 缓冲 |
+| `ffi_symbol(symbol)` | — | 拼出实际导出名，如 `search` → `kv_search` |
+| `is_error_code(error, code)` | — | 判断 `KvError` 的业务错误码 |
+| `extract_list(data)` | — | 取 `data.list`，缺失时返回空列表 |
+| `parse_response(symbol, out)` | — | 解析 `{code,data,msg}`，错误转为 `KvError` |
 
-- `KV_EMBED_MODEL` 必须在启动 cyctron 前设置；dll 与 cyctron 同进程。
-- `kv_record` 含 `rank INTEGER NOT NULL DEFAULT 0`；旧分片在首次
-  `ensure_schema` 时自动执行 `ALTER TABLE ... ADD COLUMN rank`。
-- 模型缺失时 `kv_record`（`action=put`）/ `kv_search`（文本查询）返回 `500600`。
-- 纯文本检索失败可降级为无候选；写入失败应记录日志并继续对话。
+> **符号名说明**：0.1.5 的 PE 导出表只有 `kv_collection` / `kv_embed` /
+> `kv_search`，不带 `post_` 前缀（0.1.4 曾导出 `post_kv_*`）。直接
+> `dlopen` + `GetProcAddress` 按名精确匹配，升级时只需改 `kv::FFI_PREFIX`。
+> 可用 `dumpbin /exports libary/kv_lib.dll`（或 `objdump -p`）核对导出表。
+>
+> `kv_search` 的输出缓冲为 1 MiB，其余接口为 64 KiB；`call_ffi` 默认 64 KiB，
+> 检索路径内部使用 1 MiB。
 
 ## 8. 错误码
 
 | code | 含义 |
 | --- | --- |
-| `400100` / `400101` / `400102` | 空请求 / 非 UTF-8 / JSON 解析失败 |
-| `400600` | 集合不存在 |
-| `400601` | `key` 非法 |
-| `400602` | 向量格式 / 维度不合法 |
-| `400603` | `top_k` / `min_score` 不合法 |
-| `400605` | 集合只读 / 停用，或非空集合未 `hard` 删除 |
-| `400606` | `value` / `text` / `meta` 超限 |
-| `409101` | `if_version` 版本冲突 |
-| `500600` | 模型加载 / 向量生成失败 |
-| `500601` | `database.dll` 读写失败 |
-| `500602` / `500603` | 分片 / 索引打开或检索失败 |
-| `500900` | 输出超过 64 KiB |
+| `400100` | `json_in` 为空指针 |
+| `400101` | 请求不是 UTF-8 |
+| `400102` | JSON / 反序列化错误、未知 action、缺必填字段、分页 / 数量参数非法 |
+| `400600` | 未知集合 |
+| `400601` | 非法 key |
+| `400602` | 向量维度不匹配 |
+| `400603` | 非法检索：缺少 `query`、提供 `vector`、候选超过限制 |
+| `400604` | 非法集合编码（自动创建或内部集合操作） |
+| `400605` | 集合只读 / 禁用 |
+| `400606` | 文本超过 64 KiB |
+| `500600` | 嵌入失败（模型缺失、加载失败等） |
+| `500601` | 数据库调用失败 |
+| `500602` | 分片创建失败 |
+| `500603` | 索引构建 / 缓存失败 |
 
-## 9. 验证
+## 9. 运行环境
 
-```bash
-# 单元测试：响应解析
-cargo test kv
-
-# call_chat 冒烟测试：分类检索 + 插件调用
-cargo test --test base_call_chat
-
-# 端到端：启动 testenv 后执行基础流程
-(cd testenv && ./cyctron.exe start)
-deno run --allow-net ts/test_pipeline.ts
-(cd testenv && ./cyctron.exe stop)
-```
+- 数据库：内置 SQLite，`KV_DB_DIR` 指定目录（默认 `./database`）；
+  0.1.5 不再依赖 `./libary/database.dll`。
+- 嵌入模型：默认 `./models/qwen3-embed/qwen3-embedding-0.6.gguf`，
+  可用 `KV_EMBED_MODEL` 覆盖；`KV_EMBED_THREADS` 控制嵌入线程数
+  （默认 `min(CPU 核数, 4)`）。
+- `turbovec` 要求维度为 8 的正整数倍；`dim=1024` 走索引检索，其他维度回退精确扫描。

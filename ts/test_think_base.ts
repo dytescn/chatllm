@@ -14,7 +14,9 @@
 const INFO_DB = "./info";
 const DIALOGUE_DB = "./dialogue";
 const THINK_COLLECTION = "chat_think";
-const PLUGIN_COLLECTION = "chat_plugin";
+const PLUGIN_COLLECTION = "chat_plugins";
+const PLUGIN_UUID = "00000000-0000-4000-8000-0000000000a1";
+// 需要 testenv/designdb/taskflow 中存在归属 PLUGIN_UUID、带 callback 的元素。
 const THINK_KEY = "think-base";
 const PLUGIN_KEY = "chat-plugin-do-test-chat";
 const SUPPLIER_KEY = "ai_supplier";
@@ -190,16 +192,17 @@ async function main() {
         value: JSON.stringify({
           name: "reply_sys_info",
           lib_name: "reply_sys_info",
+          plugin_uuid: PLUGIN_UUID,
           ffi_symbol: "chat",
           category: "chat",
         }),
         value_type: "json",
         text,
         rank: 1,
-        meta: { plugin: "reply_sys_info", category: "chat" },
+        meta: { plugin: "reply_sys_info", plugin_uuid: PLUGIN_UUID, category: "chat" },
       });
     }
-    assert(true, "chat_plugin 已准备“问候”“系统信息”两条记录");
+    assert(true, "chat_plugins 已准备“问候”“系统信息”两条记录");
 
     // 避免复用之前测试遗留的同 id 对话
     await dialogueUpdate(`DELETE FROM dialogue WHERE id = '${esc(thinkBaseUuid)}'`);
@@ -288,7 +291,7 @@ async function main() {
           meta: originalPlugin.meta ?? { category: "chat" },
         });
       } catch (error) {
-        console.error("恢复 chat_plugin 失败：", error);
+        console.error("恢复 chat_plugins 失败：", error);
         failed += 1;
       }
     }

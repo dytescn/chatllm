@@ -88,6 +88,6 @@ jobs:
           cmake --build build --config Release
 
       - name: Publish with dytes
-        uses: dytescn/dytes@v0.1.18
+        uses: dytescn/dytes@v0.2.2
         with:
           command: publish
