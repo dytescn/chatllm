@@ -4,7 +4,7 @@
 //
 // 前置：testenv/libary 已安装 chatllm 及依赖库（Deno FFI，无需启动 cyctron）。
 // 运行：deno run --allow-ffi --allow-read --allow-write --allow-env ts/base_1.ts
-// 说明：chat 写入 user 消息后按 think → plugins → reply 执行；
+// 说明：chat 写入 user 消息后按 think → chat_plugins → reply 执行，并写入 round 记录；
 //       assistant 内容取决于供应商、think 与插件配置。
 
 import { call, section, assert, summary } from "./client.ts";
@@ -50,8 +50,8 @@ async function main() {
   const row = (list.data?.list ?? []).find((r: any) => r.id === uuid);
   assert(!!row, "列表包含本对话");
   assert(row?.title === title, "title 正确");
-  assert(row?.message_count === 4, "message_count = 4（每次 chat 写 user + assistant）");
-  assert(row?.last_seq === 4, "last_seq = 4");
+  assert(row?.message_count === 6, "message_count = 6（两次 chat：user + assistant + round）");
+  assert(row?.last_seq === 6, "last_seq = 6");
 
   // 4. 详情
   section("4. chat_detail");
@@ -59,9 +59,9 @@ async function main() {
   console.log(detail);
   assert(detail.code === 200, "详情返回 200");
   const detailMessages = detail.data?.messages ?? {};
-  assert((detailMessages.list ?? []).length === 4, "返回 4 条消息");
+  assert((detailMessages.list ?? []).length === 6, "返回 6 条消息（4 条普通消息 + 2 条 round）");
   assert(detailMessages.first_id === 1, "first_id = 1");
-  assert(detailMessages.last_id === 4, "last_id = 4");
+  assert(detailMessages.last_id === 6, "last_id = 6");
   assert(detailMessages.has_more_before === false, "没有更早消息");
   const messages = detailMessages.list ?? [];
   assert(messages[0]?.role === "user", "第 1 条是 user");
@@ -71,13 +71,21 @@ async function main() {
   assert(messages[1]?.seq === 2 && messages[1]?.id === 2, "第 2 条 seq/id = 2");
   assert(typeof messages[1]?.content === "string" && messages[1].content.length > 0, "第 2 条内容非空");
   assert(!messages[1]?.content.includes("调用聊天插件失败"), "插件调用未失败");
-  assert(messages[2]?.role === "user", "第 3 条是 user");
+  assert(messages[2]?.role === "round", "第 3 条是 round 记录");
   assert(messages[2]?.seq === 3 && messages[2]?.id === 3, "第 3 条 seq/id = 3");
-  assert(messages[2]?.content === "base_1 第二次写入", "第 3 条内容正确");
-  assert(messages[3]?.role === "assistant", "第 4 条是 assistant 结果");
+  assert(Array.isArray(messages[2]?.content), "round.content 是阶段数组");
+  assert(!!messages[2]?.content?.[0]?.think, "round 含 think 阶段");
+  assert(!!messages[2]?.content?.[0]?.plugins, "round 含 plugins 阶段");
+  assert(!!messages[2]?.content?.[0]?.reply, "round 含 reply 阶段");
+  assert(messages[3]?.role === "user", "第 4 条是 user");
   assert(messages[3]?.seq === 4 && messages[3]?.id === 4, "第 4 条 seq/id = 4");
-  assert(typeof messages[3]?.content === "string" && messages[3].content.length > 0, "第 4 条内容非空");
-  assert(typeof messages[0]?.content_html === "string", "content_html 是字符串");
+  assert(messages[3]?.content === "base_1 第二次写入", "第 4 条内容正确");
+  assert(messages[4]?.role === "assistant", "第 5 条是 assistant 结果");
+  assert(messages[4]?.seq === 5 && messages[4]?.id === 5, "第 5 条 seq/id = 5");
+  assert(typeof messages[4]?.content === "string" && messages[4].content.length > 0, "第 5 条内容非空");
+  assert(messages[5]?.role === "round", "第 6 条是 round 记录");
+  assert(messages[5]?.seq === 6 && messages[5]?.id === 6, "第 6 条 seq/id = 6");
+  assert(messages[0]?.content_html === "", "content_html 固定为空字符串");
   assert(typeof messages[0]?.uuid === "string", "消息 uuid 存在");
 
   // 5. 搜索（按唯一 title 命中）

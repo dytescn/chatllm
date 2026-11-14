@@ -1,7 +1,7 @@
 // ts/test_pipeline.ts
 // 测试 AI 供应商配置与完整流程：
 //   1. 配置供应商与 AppKey 并创建对话
-//   2. 执行 think → plugins → reply
+//   2. 执行 think → chat_plugins → reply
 //
 // 前置：
 //   1. testenv 已启动：cd testenv && ./cyctron.exe start
@@ -183,7 +183,7 @@ async function main() {
     const createdReplies = assistantContents(createdDetail);
     assert(createdReplies.length === 1, "写入 1 条 assistant 消息");
 
-    section("2. 执行 think → plugins → reply");
+    section("2. 执行 think → chat_plugins → reply");
     await setSetting(TOKEN_KEY, "test-token");
     assert((await readSetting(TOKEN_KEY)) === "test-token", "deepseek_app_key 已配置");
 
