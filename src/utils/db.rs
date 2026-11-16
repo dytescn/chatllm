@@ -14,17 +14,17 @@ const DB_SO_PATH: &str = "./libary/database.so";
 #[cfg(target_os = "macos")]
 const DB_SO_PATH: &str = "./libary/database.dylib";
 
-/// 输出缓冲区大小：database 1.0.5+ 约定 `json_out` 至少 1 MiB。
+/// 输出缓冲区大小：database 1.0.6 约定 `json_out` 至少 1 MiB。
 const OUT_BUF_SIZE: usize = 1024 * 1024;
 
-type PostDbQueryFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
-type PostDbInsertFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
-type PostDbUpdateFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
+type DbFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 
 static DB_LIB: OnceLock<Library> = OnceLock::new();
-static DB_QUERY_FN: OnceLock<PostDbQueryFn> = OnceLock::new();
-static DB_INSERT_FN: OnceLock<PostDbInsertFn> = OnceLock::new();
-static DB_UPDATE_FN: OnceLock<PostDbUpdateFn> = OnceLock::new();
+static DB_CREATE_FN: OnceLock<DbFn> = OnceLock::new();
+static DB_QUERY_FN: OnceLock<DbFn> = OnceLock::new();
+static DB_INSERT_FN: OnceLock<DbFn> = OnceLock::new();
+static DB_UPDATE_FN: OnceLock<DbFn> = OnceLock::new();
+static DB_DELETE_FN: OnceLock<DbFn> = OnceLock::new();
 
 fn ensure_library() -> Result<&'static Library> {
     if let Some(lib) = DB_LIB.get() {
@@ -39,60 +39,52 @@ fn ensure_library() -> Result<&'static Library> {
     DB_LIB.get().context("database 库未初始化")
 }
 
-fn db_query_fn() -> Result<PostDbQueryFn> {
-    if let Some(f) = DB_QUERY_FN.get() {
-        return Ok(*f);
-    }
+fn load_symbol(name: &[u8]) -> Result<DbFn> {
     let lib = ensure_library()?;
-    let f = unsafe {
-        *lib.get::<PostDbQueryFn>(b"db_query")
-            .context("dlsym db_query 失败")?
+    let function = unsafe {
+        *lib.get::<DbFn>(name)
+            .with_context(|| format!("dlsym {} 失败", String::from_utf8_lossy(name)))?
     };
-    let _ = DB_QUERY_FN.set(f);
-    Ok(f)
+    Ok(function)
 }
 
-fn db_insert_fn() -> Result<PostDbInsertFn> {
-    if let Some(f) = DB_INSERT_FN.get() {
-        return Ok(*f);
+fn cached_fn(slot: &'static OnceLock<DbFn>, name: &[u8]) -> Result<DbFn> {
+    if let Some(function) = slot.get() {
+        return Ok(*function);
     }
-    let lib = ensure_library()?;
-    let f = unsafe {
-        *lib.get::<PostDbInsertFn>(b"db_insert")
-            .context("dlsym db_insert 失败")?
-    };
-    let _ = DB_INSERT_FN.set(f);
-    Ok(f)
+    let function = load_symbol(name)?;
+    let _ = slot.set(function);
+    Ok(function)
 }
 
-fn db_update_fn() -> Result<PostDbUpdateFn> {
-    if let Some(f) = DB_UPDATE_FN.get() {
-        return Ok(*f);
-    }
-    let lib = ensure_library()?;
-    let f = unsafe {
-        *lib.get::<PostDbUpdateFn>(b"db_update")
-            .context("dlsym db_update 失败")?
-    };
-    let _ = DB_UPDATE_FN.set(f);
-    Ok(f)
+fn db_create_fn() -> Result<DbFn> {
+    cached_fn(&DB_CREATE_FN, b"db_create")
 }
 
-fn call_ffi(
-    function: unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int,
-    db_name: &str,
-    sql: &str,
-) -> Result<Value> {
+fn db_query_fn() -> Result<DbFn> {
+    cached_fn(&DB_QUERY_FN, b"db_query")
+}
+
+fn db_insert_fn() -> Result<DbFn> {
+    cached_fn(&DB_INSERT_FN, b"db_insert")
+}
+
+fn db_update_fn() -> Result<DbFn> {
+    cached_fn(&DB_UPDATE_FN, b"db_update")
+}
+
+fn db_delete_fn() -> Result<DbFn> {
+    cached_fn(&DB_DELETE_FN, b"db_delete")
+}
+
+/// 调用 database 的 `db_*` 接口，请求为完整 JSON 对象。
+fn call_ffi(function: DbFn, db_name: &str, request: &Value) -> Result<Value> {
     println!(
-        "[db] call_ffi: db={:?}, sql={:?}",
+        "[db] call_ffi: db={:?}, request={:?}",
         db_name,
-        preview(sql, 300)
+        preview(&request.to_string(), 300)
     );
-    let req = serde_json::json!({
-        "path": db_name,
-        "sql": sql
-    });
-    let req_c = CString::new(req.to_string()).context("请求 JSON 含 \\0")?;
+    let req_c = CString::new(request.to_string()).context("请求 JSON 含 \\0")?;
 
     let mut out_buf = vec![0u8; OUT_BUF_SIZE];
     let ret = unsafe { function(req_c.as_ptr(), out_buf.as_mut_ptr() as *mut c_char) };
@@ -121,26 +113,53 @@ fn call_ffi(
     Ok(value)
 }
 
+/// 构造 `path` + `sql` 请求。
+fn sql_request(db_name: &str, sql: &str) -> Value {
+    serde_json::json!({
+        "path": db_name,
+        "sql": sql
+    })
+}
+
 /// 同步执行 db_query。
 /// `db_name` 为库名（不含 .db），database.so 内部拼成 ./database/<db_name>.db
 pub fn db_query(db_name: &str, sql: &str) -> Result<Vec<Value>> {
-    let value = call_ffi(db_query_fn()?, db_name, sql)?;
+    let value = call_ffi(db_query_fn()?, db_name, &sql_request(db_name, sql))?;
     let rows = extract_rows(&value);
     println!("[db] db_query: db={:?}, rows={}", db_name, rows.len());
     Ok(rows)
 }
 
-/// 执行写语句（CREATE / INSERT / UPSERT / UPDATE）。
-pub fn db_execute(db_name: &str, sql: &str) -> Result<()> {
-    println!("[db] db_execute: db={:?}", db_name);
-    let _ = call_ffi(db_insert_fn()?, db_name, sql)?;
+/// 创建表（`db_create`）：`schema` 为列定义，表已存在时静默成功。
+pub fn db_create(db_name: &str, table: &str, schema: &str) -> Result<()> {
+    println!("[db] db_create: db={:?}, table={:?}", db_name, table);
+    let request = serde_json::json!({
+        "path": db_name,
+        "table": table,
+        "schema": schema
+    });
+    let _ = call_ffi(db_create_fn()?, db_name, &request)?;
     Ok(())
 }
 
-/// 执行更新 / 删除语句。
+/// 执行写语句（CREATE / INSERT / UPSERT / UPDATE）。
+pub fn db_execute(db_name: &str, sql: &str) -> Result<()> {
+    println!("[db] db_execute: db={:?}", db_name);
+    let _ = call_ffi(db_insert_fn()?, db_name, &sql_request(db_name, sql))?;
+    Ok(())
+}
+
+/// 执行更新语句。
 pub fn db_update(db_name: &str, sql: &str) -> Result<()> {
     println!("[db] db_update: db={:?}", db_name);
-    let _ = call_ffi(db_update_fn()?, db_name, sql)?;
+    let _ = call_ffi(db_update_fn()?, db_name, &sql_request(db_name, sql))?;
+    Ok(())
+}
+
+/// 执行删除语句（`db_delete`）。
+pub fn db_delete(db_name: &str, sql: &str) -> Result<()> {
+    println!("[db] db_delete: db={:?}", db_name);
+    let _ = call_ffi(db_delete_fn()?, db_name, &sql_request(db_name, sql))?;
     Ok(())
 }
 

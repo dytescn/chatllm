@@ -4,9 +4,9 @@
 //! designdb 以 `cdylib` 形式提供 `post_db_*` 符号，chatllm 通过 `dlopen` 直接调用，
 //! 不经过 cyctron 的 HTTP 层。逻辑库名固定为 `chatllm`。
 //!
-//! 目前只依赖 designdb 1.0.0 已发布的 5 个符号（query / insert / update / delete /
-//! create）。带条件计数与索引由本模块用分页查询在应用侧兜底，等 designdb 提供
-//! `db_count` / `db_create_index` 后再替换。
+//! 目前封装 designdb 1.0.4 已发布的 5 个符号（query / insert / update /
+//! delete / create）。带条件计数与索引仍由本模块用分页查询在应用侧兜底，
+//! 等 designdb 提供 `db_count` / `db_create_index` 后再替换。
 
 use anyhow::{bail, Context, Result};
 use libloading::Library;
@@ -22,7 +22,7 @@ const DESIGNDB_LIB: &str = "./libary/libdesigndb.so";
 #[cfg(target_os = "macos")]
 const DESIGNDB_LIB: &str = "./libary/libdesigndb.dylib";
 
-/// 与 designdb 1.0.3 的 `write_json_out` 保持一致（单次响应上限 16 MiB）。
+/// 与 designdb 1.0.4 的 `write_json_out` 保持一致（单次响应上限 16 MiB）。
 const OUT_BUF_SIZE: usize = 16 * 1024 * 1024;
 
 /// chatllm 唯一逻辑库名（旧单库实现，保留说明；新实现按对话 UUID 分库）。
@@ -34,6 +34,7 @@ const SCAN_PAGE_SIZE: u64 = 50;
 type FfiFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 
 static LIB: OnceLock<Library> = OnceLock::new();
+static CREATE_FN: OnceLock<FfiFn> = OnceLock::new();
 static QUERY_FN: OnceLock<FfiFn> = OnceLock::new();
 static INSERT_FN: OnceLock<FfiFn> = OnceLock::new();
 static UPDATE_FN: OnceLock<FfiFn> = OnceLock::new();
@@ -57,6 +58,15 @@ fn symbol(name: &[u8]) -> Result<FfiFn> {
             .with_context(|| format!("dlsym {} 失败", String::from_utf8_lossy(name)))?
     };
     Ok(*function)
+}
+
+fn create_fn() -> Result<FfiFn> {
+    if let Some(f) = CREATE_FN.get() {
+        return Ok(*f);
+    }
+    let f = symbol(b"post_db_create")?;
+    let _ = CREATE_FN.set(f);
+    Ok(f)
 }
 
 fn query_fn() -> Result<FfiFn> {
@@ -131,6 +141,23 @@ fn call(function: FfiFn, req: Value) -> Result<Value> {
 
 fn data_of(value: &Value) -> Value {
     value.get("data").cloned().unwrap_or(Value::Null)
+}
+
+/// 创建集合。
+///
+/// designdb 的 `post_db_create` 对已存在的集合静默成功；业务侧通常无需显式调用，
+/// 由 `insert` 自动建集合，保留入口便于初始化脚本与测试。
+pub fn create(path: &str, collection: &str) -> Result<()> {
+    println!(
+        "[designdb] create: path={:?}, collection={:?}",
+        path, collection
+    );
+    let req = json!({
+        "path": path,
+        "collection": collection,
+    });
+    call(create_fn()?, req)?;
+    Ok(())
 }
 
 pub fn query(

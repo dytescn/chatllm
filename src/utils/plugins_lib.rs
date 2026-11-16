@@ -8,11 +8,16 @@
 //! 约定：`int symbol(const char *json_in, char *json_out)`，输出缓冲区 64 KiB，
 //! 响应为 `{code, data, msg}`，成功 `code = 200`。
 //!
-//! 只封装调用层；请求字段与业务语义见 designplugin_lib 的 `docs/ffi.md`。
+//! 1.1.0 的列表接口（`get_plugins` / `get_functions` / `get_skills`）支持
+//! `cursor` 游标分页，响应带 `next_cursor` / `has_more`；分页参数可用
+//! [`list_request`] 构造，响应用 [`next_cursor`] / [`has_more`] 读取。
+//!
+//! 只封装调用层；请求字段与业务语义见 designplugin_lib 的 `docs/ffi.md`
+//! 以及本仓库的 `docs/plugins_lib.md`。
 
 use anyhow::{anyhow, bail, Context, Result};
 use libloading::Library;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::{c_char, c_int};
@@ -28,6 +33,9 @@ const PLUGIN_LIB_PATH: &str = "./libary/plugin_lib.dylib";
 
 /// plugin_lib 对外 FFI 的输出缓冲：64 KiB。
 const OUT_BUF_SIZE: usize = 65536;
+
+/// 列表接口的 `page_size` 上限（上游限制 `1..=100`）。
+pub const MAX_PAGE_SIZE: u32 = 100;
 
 /// 参数错误：缺必填字段、枚举值非法、无字段可更新。
 pub const CODE_BAD_REQUEST: i64 = 400103;
@@ -180,6 +188,36 @@ pub fn call_ffi(symbol: &str, request: &Value) -> Result<Value> {
         .to_str()
         .context("plugin_lib 响应非 UTF-8")?;
     parse_response(symbol, out)
+}
+
+/// 构造列表接口的分页 / 游标参数；未提供的字段不会写入请求。
+///
+/// `get_plugins` / `get_functions` / `get_skills` 支持 `cursor`：把上一页
+/// 响应中的 `next_cursor` 原样传入即可；传 `cursor` 时上游忽略 `page`。
+pub fn list_request(page: Option<u32>, page_size: Option<u32>, cursor: Option<&str>) -> Value {
+    let mut request = serde_json::Map::new();
+    if let Some(page) = page {
+        request.insert("page".to_string(), json!(page));
+    }
+    if let Some(page_size) = page_size {
+        request.insert("page_size".to_string(), json!(page_size));
+    }
+    if let Some(cursor) = cursor {
+        request.insert("cursor".to_string(), json!(cursor));
+    }
+    Value::Object(request)
+}
+
+/// 读取列表响应中的 `next_cursor`；没有下一页时为 `None`。
+pub fn next_cursor(data: &Value) -> Option<&str> {
+    data.get("next_cursor").and_then(Value::as_str)
+}
+
+/// 列表响应是否还有下一页；字段缺失时按 `false` 处理。
+pub fn has_more(data: &Value) -> bool {
+    data.get("has_more")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// 按字符截断字符串，避免日志刷屏。

@@ -51,4 +51,4 @@ int (*)(const char *json_in, char *json_out);
 | `src/utils/think.rs` | `chat_think` 检索与回调 |
 | `src/utils/chat_plugins.rs` | `chat_plugins` 逐条检索 → taskflow → 回调 |
 | `src/utils/reply.rs` | `chat_reply` 与回复组装 |
-| `src/utils/plugins_lib.rs` | designplugin_lib 的 FFI 客户端 |
+| `src/utils/plugins_lib.rs` | designplugin_lib 的 FFI 客户端，接口与参数见 [`plugins_lib.md`](plugins_lib.md) |

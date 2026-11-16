@@ -36,7 +36,7 @@ cargo build --release
 | `database` | 1.0.6 | SQLite：`dialogue.db` |
 | `designdb` | 1.0.4 | 每个对话 UUID 一个消息库 |
 | `kv_lib` | 0.1.5 | `chat_think` / `chat_plugins` / `chat_reply` 检索（内置 SQLite，无需 database.dll） |
-| `plugin_lib` | 1.0.21 | 插件能力清单 |
+| `plugin_lib` | 1.1.0 | 插件能力清单 |
 
 ## 4. 数据库与配置
 
@@ -54,7 +54,16 @@ cargo build --release
 
 `check` 已从主流程移除，后续以插件形式提供；配置缺失由 check 插件处理。
 
-## 5. 注意事项
+## 5. 测试环境
+
+- `dytes test`（0.2.3+）在包目录生成 `.dytes/env/`，其中只有依赖包；当前包产物使用
+  `target/release/` 下的本地构建文件。
+- `cargo test` 与 `ts/*.ts` 实际读取仓库根的 `testenv/`（不入库，可随时删除重建），
+  需要 `libary/` 与 `database/dialogue.db` 等运行数据。
+- 目录布局、依赖下载规则、`testenv/` 组装与排查见 skill `chatllm-testenv`。
+- 缺少 `testenv/` 时，`cargo test` 的数据用例自动跳过，`ts/*.ts` 会直接报错。
+
+## 6. 注意事项
 
 - 外部库路径固定为 `./libary/*`，未配置化；
 - 输出缓冲区 64 KiB（`kv_search` 为 1 MiB）；

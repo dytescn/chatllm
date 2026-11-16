@@ -1,8 +1,9 @@
 // tests/utils_plugins_lib.rs —— utils::plugins_lib 的响应解析与符号清单测试
 use chatllm::utils::plugins_lib::{
-    check_ret, is_error_code, parse_response, preview, symbols, PluginLibError, CODE_CONFLICT,
-    CODE_NOT_FOUND,
+    check_ret, has_more, is_error_code, list_request, next_cursor, parse_response, preview,
+    symbols, PluginLibError, CODE_CONFLICT, CODE_NOT_FOUND, MAX_PAGE_SIZE,
 };
+use serde_json::json;
 
 #[test]
 fn symbols_match_export_table() {
@@ -93,4 +94,36 @@ fn preview_truncates_by_char() {
     assert_eq!(preview("abc", 5), "abc");
     assert_eq!(preview("abcdef", 3), "abc...");
     assert_eq!(preview("中文内容", 2), "中文...");
+}
+
+#[test]
+fn list_request_omits_absent_fields() {
+    assert_eq!(list_request(None, None, None), json!({}));
+    assert_eq!(
+        list_request(Some(1), Some(20), None),
+        json!({"page": 1, "page_size": 20})
+    );
+    assert_eq!(
+        list_request(None, Some(50), Some("cursor-1")),
+        json!({"page_size": 50, "cursor": "cursor-1"})
+    );
+}
+
+#[test]
+fn next_cursor_and_has_more_read_list_meta() {
+    let data = json!({"list": [], "next_cursor": "c1", "has_more": true});
+    assert_eq!(next_cursor(&data), Some("c1"));
+    assert!(has_more(&data));
+
+    let last = json!({"list": [], "next_cursor": null, "has_more": false});
+    assert_eq!(next_cursor(&last), None);
+    assert!(!has_more(&last));
+
+    assert_eq!(next_cursor(&json!({})), None);
+    assert!(!has_more(&json!({})));
+}
+
+#[test]
+fn page_size_limit_is_100() {
+    assert_eq!(MAX_PAGE_SIZE, 100);
 }

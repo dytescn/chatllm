@@ -53,10 +53,10 @@ chat
 
 | 依赖 | 用途 |
 | --- | --- |
-| `database` | SQLite |
-| `libdesigndb` | 消息库与 taskflow |
+| `database` | SQLite（1.0.6） |
+| `libdesigndb` | 消息库与 taskflow（1.0.4） |
 | `kv_lib` | `chat_think` / `chat_plugins` / `chat_reply` 检索（0.1.5） |
-| `plugin_lib` | 插件能力清单（`utils/plugins_lib.rs` 封装） |
+| `plugin_lib` | 插件能力清单（1.1.0，`utils/plugins_lib.rs` 封装） |
 
 声明见 `dytes.json`；初始化文件为 `setup.json`。
 
@@ -74,6 +74,7 @@ cargo build --release
 - [`docs/ffi.md`](docs/ffi.md)：FFI 接口与错误码
 - [`docs/db.md`](docs/db.md)：对话表、消息与轮次记录
 - [`docs/kv_lib.md`](docs/kv_lib.md)：kv_lib 调用方式
+- [`docs/plugins_lib.md`](docs/plugins_lib.md)：plugins_lib 接口与参数约定
 - [`skills/chatllm-runflow/SKILL.md`](skills/chatllm-runflow/SKILL.md)：完整对话流程
 - [`skills/chatllm-code-standards/SKILL.md`](skills/chatllm-code-standards/SKILL.md)：代码组织规范
 - [`todo/TODO.md`](todo/TODO.md)：路线图与待办

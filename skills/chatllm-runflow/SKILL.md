@@ -97,7 +97,7 @@ chat
 | --- | --- |
 | `utils/kv.rs` | `chat_think` / `chat_plugins` / `chat_reply` 检索 |
 | `utils/designdb.rs` | 消息库、技能与 taskflow 读取 |
-| `utils/plugins_lib.rs` | designplugin_lib 的 FFI 客户端 |
+| `utils/plugins_lib.rs` | designplugin_lib 的 FFI 客户端，接口与参数见 [`docs/plugins_lib.md`](../../docs/plugins_lib.md) |
 | `utils/chat_plugins.rs` | 插件动态库加载、回调与重入保护 |
 
 ## 7. 配置

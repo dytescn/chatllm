@@ -6,12 +6,13 @@ chatllm 通过 `dlopen ./libary/kv_lib.dll` 直接调用 kv_lib 的 FFI 符号�
 
 ## 1. 调用约定
 
-kv_lib 0.1.5 是 Rust 编译的 `cdylib`，导出 3 个 C ABI 函数：
+kv_lib 0.1.5 是 Rust 编译的 `cdylib`，导出 4 个 C ABI 函数：
 
 | 符号 | 用途 |
 | --- | --- |
-| `kv_collection` | 集合列表、统计 |
+| `kv_collection` | 集合列表、统计、创建 / 更新 |
 | `kv_embed` | 文本组写入与向量化、重建索引 / 分片统计 / 文本哈希 |
+| `kv_record` | 记录 CRUD：`put` / `list` / `get` / `delete` |
 | `kv_search` | 按 `query` 文本检索 |
 
 ```c
@@ -33,8 +34,9 @@ int kv_xxx(const char *json_in, char *json_out);
 
 | 符号 | 默认 `action` | 可用 `action` |
 | --- | --- | --- |
-| `kv_collection` | `list` | `list` / `stats` |
+| `kv_collection` | `list` | `list` / `put` / `stats` |
 | `kv_embed` | `embed` | `embed` / `rebuild` |
+| `kv_record` | `list` | `put` / `list` / `get` / `delete` |
 | `kv_search` | 无 | 总是执行检索 |
 
 未知 `action` 返回 `400102`。
@@ -54,7 +56,8 @@ kv_lib 使用内置 SQLite（`rusqlite`），数据库文件位于 `KV_DB_DIR`
 默认参数：`dim = 1024`、`model = qwen3-embed`、`shard_max_mb = 16`、
 `index_min_rows = 0`、`state = 0`（启用）。
 
-chatllm 对话流程另用 3 个业务集合，由插件安装流程调用 `kv_embed` 时按需创建：
+chatllm 对话流程另用 3 个业务集合，由插件安装流程通过 `kv_collection`
+（`action=put`）或 `kv_embed` 按需创建：
 
 | code | 用途 |
 | --- | --- |
@@ -62,8 +65,8 @@ chatllm 对话流程另用 3 个业务集合，由插件安装流程调用 `kv_e
 | `chat_plugins` | chat_plugins 阶段逐条检索 |
 | `chat_reply` | reply 阶段检索 |
 
-0.1.5 的 FFI **不再暴露记录 CRUD**：集合与记录的创建、更新、删除由内部流程
-（`kv_embed` 或宿主）维护，FFI 只提供列表、统计、向量化与检索。
+集合的创建 / 更新由 `kv_collection` 的 `put` 提供；记录 CRUD 由 `kv_record`
+提供。`kv_embed` 仍用于按 `id` 的文本组 upsert 与重建。
 
 ## 3. `kv_collection`
 
@@ -116,6 +119,27 @@ chatllm 对话流程另用 3 个业务集合，由插件安装流程调用 `kv_e
 
 单集合 `index` 取值：`fresh`（索引缓存命中）/ `stale`（有数据但当前
 generation 未缓存）/ `none`（没有可用索引数据）。
+
+### action = `put`
+
+```json
+{
+  "action":"put","code":"chat_think","name":"聊天思考",
+  "description":"think 阶段检索词与技能",
+  "dim":1024,"model":"qwen3-embed","shard_max_mb":16,
+  "index_min_rows":0,"state":0,"sort":10
+}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `code` | 是 | 集合编码 |
+| `name` / `description` | 否 | 缺省保留原值；新建时 `name` 默认为 `code` |
+| `dim` / `model` | 否 | 新建时默认 `1024` / `qwen3-embed`；已有集合改变 `dim` 且含记录时拒绝 |
+| `shard_max_mb` / `index_min_rows` / `state` / `sort` | 否 | 缺省保留原值或默认值 |
+
+响应 `data`：`{"collection":{...},"created":true}`。已存在时只更新传入字段，
+`created` 为 `false`。
 
 ## 4. `kv_embed`
 
@@ -198,7 +222,76 @@ generation 未缓存）/ `none`（没有可用索引数据）。
 排序：`score` 降序 → `rank`（正数升序，`0` 未排名置后）→ `key`。
 集合不存在时返回 `400600`，业务侧通常按“无命中”处理。
 
-## 6. 在对话流程中的位置
+## 6. `kv_record`
+
+宿主通过该接口维护 `key` / `value` / `text` / `meta` / `rank` 记录，与
+`kv_embed` 的 `{id}:{index}` 文本组共用分片；`UNIQUE(key)` 仍是分片内约束。
+
+### action = `put`
+
+```json
+{
+  "action":"put","collection":"chat_think",
+  "items":[{
+    "key":"uuid:prompt:greeting","value":"问候|你好","text":"问候|你好",
+    "meta":{"plugin_uuid":"uuid","kind":"prompt"},"rank":1,"force":false
+  }]
+}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `key` | 是 | 记录键，1..=128 字节 |
+| `value` / `value_type` | 否 | `value_type` 为 `text` 或 `json`，默认 `text` |
+| `text` / `text_hash` | 否 | `text` 非空时计算哈希并按集合模型向量化 |
+| `meta` | 否 | JSON 对象，序列化后 ≤8 KiB |
+| `rank` | 否 | 业务排序，正数升序，`0` 视为未排名 |
+| `force` | 否 | `true` 时即使文本未变也重新嵌入 |
+| `if_version` | 否 | 乐观锁；与现有版本不一致时该条失败 |
+
+响应 `data`：`{"written":1,"skipped":0,"failed":0,"errors":[],"model":"qwen3-embed","dim":1024}`。
+嵌入失败时记录可能以无向量状态写入，`errors` 会列出对应 key。
+
+### action = `list`
+
+```json
+{"action":"list","collection":"chat_think","prefix":"uuid:prompt:","page":1,"page_size":100,"with_value":true}
+```
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `collection` | — | 必填 |
+| `prefix` | 空 | 按 `key` 前缀过滤；空表示全部 |
+| `page` / `page_size` | 1 / 20 | `page_size` 限制 1..=100 |
+| `with_value` | true | 是否返回 `value` / `meta` |
+
+响应 `data` 含 `list` / `total` / `page` / `page_size`；`list` 条目包含
+`key`、`value`、`value_type`、`version`、`rank`、`dim`、`has_vector`、
+`text_hash`、`created_at`、`updated_at`、`meta`。
+
+### action = `get`
+
+```json
+{"action":"get","collection":"chat_think","keys":["uuid:prompt:greeting"],"with_vector":false}
+```
+
+响应 `data`：`{"list":[{...}],"missing":[]}`；`with_vector=true` 时返回向量。
+
+### action = `delete`
+
+```json
+{"action":"delete","collection":"chat_think","keys":["uuid:prompt:greeting"]}
+```
+
+响应 `data`：`{"deleted":1,"requested":1,"missing":[]}`。
+
+### 限制
+
+- 单批 ≤500 条；`page_size` 1..=100；
+- `meta` ≤8 KiB；`value` ≤256 KiB；`text` ≤64 KiB；
+- 输出缓冲区 64 KiB（`kv_search` 为 1 MiB）。
+
+## 7. 在对话流程中的位置
 
 ```text
 chat
@@ -209,7 +302,7 @@ chat
 
 think 用默认分类关键词 `base` 检索 `chat_think`；reply 先按 `base` 检索 `chat_reply`，未命中时原样输出合并结果。
 
-## 7. Rust 封装
+## 8. Rust 封装
 
 实现：`src/utils/kv.rs`，统一经 `call_ffi(symbol, request)` 调用。
 
@@ -220,22 +313,32 @@ think 用默认分类关键词 `base` 检索 `chat_think`；reply 先按 `base` 
 | `search_plugins(query, top_k)` | `kv_search` | `plugin` 集合检索 |
 | `search_chat_plugins(query, top_k)` | `kv_search` | `chat_plugins`；集合不存在返回空 |
 | `collection_list(page, page_size)` | `kv_collection` | `action = list` |
+| `collection_put(code, spec)` | `kv_collection` | `action = put`；`spec` 为 `CollectionSpec` |
 | `stats(collection)` | `kv_collection` | `action = stats` |
+| `record_put(collection, items)` | `kv_record` | 批量写入 / 更新记录 |
+| `record_list(collection, prefix, page, page_size, with_value)` | `kv_record` | 按 `key` 前缀分页读取 |
+| `record_get(collection, keys, with_vector)` | `kv_record` | 按 key 读取 |
+| `record_delete(collection, keys)` | `kv_record` | 按 key 删除 |
 | `call_ffi(symbol, request)` | `kv_<symbol>` | 通用调用，64 KiB 缓冲 |
 | `ffi_symbol(symbol)` | — | 拼出实际导出名，如 `search` → `kv_search` |
 | `is_error_code(error, code)` | — | 判断 `KvError` 的业务错误码 |
 | `extract_list(data)` | — | 取 `data.list`，缺失时返回空列表 |
 | `parse_response(symbol, out)` | — | 解析 `{code,data,msg}`，错误转为 `KvError` |
 
-> **符号名说明**：0.1.5 的 PE 导出表只有 `kv_collection` / `kv_embed` /
-> `kv_search`，不带 `post_` 前缀（0.1.4 曾导出 `post_kv_*`）。直接
+对应的 `build_*_request`（`build_collection_put_request`、`build_record_put_request`、
+`build_record_list_request`、`build_record_get_request`、
+`build_record_delete_request`）是纯请求构造函数，便于测试与内省。
+
+> **符号名说明**：0.1.5 的 PE 导出表是 `kv_collection` / `kv_embed` /
+> `kv_record` / `kv_search`，不带 `post_` 前缀（0.1.4 曾导出 `post_kv_*`）。直接
 > `dlopen` + `GetProcAddress` 按名精确匹配，升级时只需改 `kv::FFI_PREFIX`。
 > 可用 `dumpbin /exports libary/kv_lib.dll`（或 `objdump -p`）核对导出表。
 >
 > `kv_search` 的输出缓冲为 1 MiB，其余接口为 64 KiB；`call_ffi` 默认 64 KiB，
-> 检索路径内部使用 1 MiB。
+> 检索路径内部使用 1 MiB。`kv_embed` 暂无专用封装，需要时用
+> `call_ffi("embed", ...)` 调用。
 
-## 8. 错误码
+## 9. 错误码
 
 | code | 含义 |
 | --- | --- |
@@ -254,7 +357,7 @@ think 用默认分类关键词 `base` 检索 `chat_think`；reply 先按 `base` 
 | `500602` | 分片创建失败 |
 | `500603` | 索引构建 / 缓存失败 |
 
-## 9. 运行环境
+## 10. 运行环境
 
 - 数据库：内置 SQLite，`KV_DB_DIR` 指定目录（默认 `./database`）；
   0.1.5 不再依赖 `./libary/database.dll`。

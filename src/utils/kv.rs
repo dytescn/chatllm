@@ -5,11 +5,13 @@
 //! 直接调用，不经过 cyctron 的 HTTP 层。导出表与接口说明见
 //! `docs/kv_lib.md`。
 //!
-//! 只封装当前流程需要的接口：集合、检索与统计；其余接口可按
-//! [`call_ffi`] 的方式扩展。
+//! 0.1.5 导出 4 个接口：集合（`kv_collection`）、向量化（`kv_embed`）、
+//! 记录（`kv_record`）与检索（`kv_search`）。本模块按接口分组封装，
+//! 业务未直接使用的能力也保留调用入口。
 
 use anyhow::{anyhow, bail, Context, Result};
 use libloading::Library;
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -24,7 +26,8 @@ const KV_LIB_PATH: &str = "./libary/kv_lib.so";
 #[cfg(target_os = "macos")]
 const KV_LIB_PATH: &str = "./libary/kv_lib.dylib";
 
-/// kv_lib 0.1.5 的导出符号前缀：`kv_collection` / `kv_embed` / `kv_search`。
+/// kv_lib 0.1.5 的导出符号前缀：`kv_collection` / `kv_embed` / `kv_record` /
+/// `kv_search`。
 ///
 /// 直接 `dlopen` 时按导出表精确匹配，0.1.5 起不再带 `post_` 前缀。
 pub const FFI_PREFIX: &str = "kv_";
@@ -38,6 +41,9 @@ const SEARCH_OUT_BUF_SIZE: usize = 1024 * 1024;
 /// `kv_search` 的 `top_k` 取值范围。
 const TOP_K_MIN: i64 = 1;
 const TOP_K_MAX: i64 = 100;
+
+/// `kv_record`（put）单批最多写入的记录数。
+pub const RECORD_MAX_ITEMS: usize = 500;
 
 /// 集合不存在（`kv_collection` stats / `kv_search`）。
 pub const CODE_COLLECTION_NOT_FOUND: i64 = 400600;
@@ -215,6 +221,173 @@ pub fn stats(collection: Option<&str>) -> Result<Value> {
         "collection",
         &json!({ "action": "stats", "collection": collection }),
     )
+}
+
+/// `kv_collection`（action=put）：创建或更新集合。
+///
+/// `code` 必填；`spec` 中为 `None` 的字段沿用集合现值（新建时用默认值）。
+/// 已存在时只更新传入字段，返回 `{collection, created}`。
+pub fn collection_put(code: &str, spec: &CollectionSpec) -> Result<Value> {
+    call_ffi("collection", &build_collection_put_request(code, spec)?)
+}
+
+/// 构造 `kv_collection`（action=put）请求。
+pub fn build_collection_put_request(code: &str, spec: &CollectionSpec) -> Result<Value> {
+    let mut request = serde_json::to_value(spec).context("序列化集合参数失败")?;
+    request["action"] = json!("put");
+    request["code"] = json!(code);
+    Ok(request)
+}
+
+/// `kv_collection`（action=put）的可选字段。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CollectionSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dim: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shard_max_mb: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_min_rows: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<i64>,
+}
+
+/// `kv_record`（action=put）的单条记录。
+#[derive(Debug, Clone, Serialize)]
+pub struct RecordItem {
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub if_version: Option<i64>,
+}
+
+impl RecordItem {
+    /// 以 `key` 构造一条只含键的记录，其余字段用 `None` 省略。
+    pub fn new(key: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: None,
+            value_type: None,
+            text: None,
+            text_hash: None,
+            meta: None,
+            rank: None,
+            force: None,
+            if_version: None,
+        }
+    }
+}
+
+/// `kv_record`（action=put）：批量写入 / 更新记录。
+///
+/// 单批不超过 [`RECORD_MAX_ITEMS`] 条；`text` 非空时按集合模型生成向量。
+pub fn record_put(collection: &str, items: &[RecordItem]) -> Result<Value> {
+    call_ffi("record", &build_record_put_request(collection, items)?)
+}
+
+/// 构造 `kv_record`（action=put）请求。
+pub fn build_record_put_request(collection: &str, items: &[RecordItem]) -> Result<Value> {
+    let items = serde_json::to_value(items).context("序列化记录失败")?;
+    Ok(json!({
+        "action": "put",
+        "collection": collection,
+        "items": items
+    }))
+}
+
+/// `kv_record`（action=list）：按 `key` 前缀分页读取记录。
+///
+/// `prefix` 为空表示不过滤；`with_value` 为 `None` 时沿用 kv_lib 默认值 `true`。
+pub fn record_list(
+    collection: &str,
+    prefix: Option<&str>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+    with_value: Option<bool>,
+) -> Result<Value> {
+    call_ffi(
+        "record",
+        &build_record_list_request(collection, prefix, page, page_size, with_value),
+    )
+}
+
+/// 构造 `kv_record`（action=list）请求。
+pub fn build_record_list_request(
+    collection: &str,
+    prefix: Option<&str>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+    with_value: Option<bool>,
+) -> Value {
+    let mut request = json!({ "action": "list", "collection": collection });
+    if let Some(prefix) = prefix {
+        request["prefix"] = json!(prefix);
+    }
+    if let Some(page) = page {
+        request["page"] = json!(page);
+    }
+    if let Some(page_size) = page_size {
+        request["page_size"] = json!(page_size);
+    }
+    if let Some(with_value) = with_value {
+        request["with_value"] = json!(with_value);
+    }
+    request
+}
+
+/// `kv_record`（action=get）：按 key 批量读取记录。
+///
+/// `with_vector=false` 时响应不含向量，适合宿主侧展示与点查。
+pub fn record_get(collection: &str, keys: &[String], with_vector: bool) -> Result<Value> {
+    call_ffi(
+        "record",
+        &build_record_get_request(collection, keys, with_vector),
+    )
+}
+
+/// 构造 `kv_record`（action=get）请求。
+pub fn build_record_get_request(collection: &str, keys: &[String], with_vector: bool) -> Value {
+    json!({
+        "action": "get",
+        "collection": collection,
+        "keys": keys,
+        "with_vector": with_vector
+    })
+}
+
+/// `kv_record`（action=delete）：按 key 批量删除记录。
+pub fn record_delete(collection: &str, keys: &[String]) -> Result<Value> {
+    call_ffi("record", &build_record_delete_request(collection, keys))
+}
+
+/// 构造 `kv_record`（action=delete）请求。
+pub fn build_record_delete_request(collection: &str, keys: &[String]) -> Value {
+    json!({
+        "action": "delete",
+        "collection": collection,
+        "keys": keys
+    })
 }
 
 /// 把 `top_k` 夹到 kv_lib 支持的 `1..=100`。

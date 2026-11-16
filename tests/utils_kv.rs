@@ -1,8 +1,10 @@
 // tests/utils_kv.rs —— utils::kv 的响应解析与请求构造测试
 use chatllm::utils::kv::{
-    build_search_request, check_ret, clamp_top_k, extract_list, ffi_symbol, is_error_code,
-    parse_response, preview, take_list, KvError, COLLECTION_CHAT, COLLECTION_CHAT_PLUGINS,
-    COLLECTION_PLUGIN, COLLECTION_PROMPT,
+    build_collection_put_request, build_record_delete_request, build_record_get_request,
+    build_record_list_request, build_record_put_request, build_search_request, check_ret,
+    clamp_top_k, extract_list, ffi_symbol, is_error_code, parse_response, preview, take_list,
+    CollectionSpec, KvError, RecordItem, COLLECTION_CHAT, COLLECTION_CHAT_PLUGINS,
+    COLLECTION_PLUGIN, COLLECTION_PROMPT, RECORD_MAX_ITEMS,
 };
 use serde_json::{json, Value};
 
@@ -11,6 +13,7 @@ fn ffi_symbol_uses_kv_prefix() {
     assert_eq!(ffi_symbol("search"), "kv_search");
     assert_eq!(ffi_symbol("collection"), "kv_collection");
     assert_eq!(ffi_symbol("embed"), "kv_embed");
+    assert_eq!(ffi_symbol("record"), "kv_record");
 }
 
 #[test]
@@ -149,4 +152,61 @@ fn collection_constants_are_stable() {
     assert_eq!(COLLECTION_PLUGIN, "plugin");
     assert_eq!(COLLECTION_PROMPT, "prompt");
     assert_eq!(COLLECTION_CHAT_PLUGINS, "chat_plugins");
+}
+
+#[test]
+fn collection_put_request_carries_code_and_action() {
+    let spec = CollectionSpec {
+        sort: Some(10),
+        ..Default::default()
+    };
+    let request = build_collection_put_request("chat_think", &spec).unwrap();
+    assert_eq!(request["action"], "put");
+    assert_eq!(request["code"], "chat_think");
+    assert_eq!(request["sort"], 10);
+    assert!(request.get("name").is_none());
+}
+
+#[test]
+fn record_put_request_omits_absent_fields() {
+    let request = build_record_put_request("chat_think", &[RecordItem::new("k1")]).unwrap();
+    assert_eq!(request["action"], "put");
+    assert_eq!(request["collection"], "chat_think");
+    assert_eq!(request["items"][0], json!({"key": "k1"}));
+}
+
+#[test]
+fn record_list_request_only_includes_given_fields() {
+    let request =
+        build_record_list_request("chat_think", Some("uuid:"), Some(2), None, Some(false));
+    assert_eq!(request["action"], "list");
+    assert_eq!(request["prefix"], "uuid:");
+    assert_eq!(request["page"], 2);
+    assert!(request.get("page_size").is_none());
+    assert_eq!(request["with_value"], false);
+
+    let defaults = build_record_list_request("chat_think", None, None, None, None);
+    assert_eq!(
+        defaults,
+        json!({"action": "list", "collection": "chat_think"})
+    );
+}
+
+#[test]
+fn record_get_and_delete_requests() {
+    let keys = vec!["k1".to_string(), "k2".to_string()];
+
+    let get = build_record_get_request("chat_think", &keys, false);
+    assert_eq!(get["action"], "get");
+    assert_eq!(get["with_vector"], false);
+    assert_eq!(get["keys"], json!(["k1", "k2"]));
+
+    let delete = build_record_delete_request("chat_think", &keys);
+    assert_eq!(delete["action"], "delete");
+    assert_eq!(delete["keys"], json!(["k1", "k2"]));
+}
+
+#[test]
+fn record_item_batch_limit_is_500() {
+    assert_eq!(RECORD_MAX_ITEMS, 500);
 }
