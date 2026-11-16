@@ -1,7 +1,7 @@
 # chat
 
 - **导出函数**：`post_chat`
-- **用途**：新建 / 续聊对话，执行 `think → plugins → reply`
+- **用途**：新建 / 续聊对话，执行 `think → chat_plugins → reply`
 
 ## 请求
 

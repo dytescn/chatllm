@@ -9,5 +9,6 @@
 一次 `chat` 调用写入 user / assistant 消息，以及一条 `role = "round"` 的轮次记录。
 普通消息与轮次记录共用 `dialogue.last_seq`，写入后同步 `message_count`。
 
-轮次记录包含 `think` / `plugins` / `reply` 三个阶段，每个阶段通过 `calls` 记录
-插件调用；字段与示例见 [`db/round.md`](db/round.md)。
+轮次记录包含 `think` / `plugins` / `reply` 三个阶段（`chat_plugins` 阶段写入
+`plugins` 字段），插件调用记录在各阶段的 `calls`；字段与示例见
+[`db/round.md`](db/round.md)。

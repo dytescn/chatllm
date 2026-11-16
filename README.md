@@ -8,8 +8,8 @@
 
 - 新建 / 续聊对话，保存 user 与 assistant 消息；
 - 对话列表、搜索、更新、详情与游标分页；
-- `think → plugins → reply` 对话编排；
-- plugins 按 `plugin_uuid` 读取 taskflow，执行插件回调。
+- `think → chat_plugins → reply` 对话编排；
+- chat_plugins 按 `plugin_uuid` 读取 taskflow，执行插件回调。
 
 `check` 已移除，后续以插件形式提供。
 
@@ -30,7 +30,7 @@ chat
 ## FFI
 
 统一返回 `{code, data, msg}`，成功 `code = 200`；结果写入调用方提供的
-64 KiB 缓冲区。
+64 KiB 缓冲区（`kv_search` 为 1 MiB）。
 
 | 导出函数 | 说明 |
 | --- | --- |
@@ -48,7 +48,6 @@ chat
 | --- | --- |
 | 对话索引 | `database/dialogue.db` → `dialogue` |
 | 对话消息 | `designdb/<dialogue_id>` → `messages` |
-| 设置 | `database/info.db` → `setting` |
 
 ## 依赖
 
@@ -56,8 +55,8 @@ chat
 | --- | --- |
 | `database` | SQLite |
 | `libdesigndb` | 消息库与 taskflow |
-| `kv_lib` | `chat_think` / `chat_plugins` / `chat_reply` 检索 |
-| `plugin_lib` | 插件能力清单 |
+| `kv_lib` | `chat_think` / `chat_plugins` / `chat_reply` 检索（0.1.5） |
+| `plugin_lib` | 插件能力清单（`utils/plugins_lib.rs` 封装） |
 
 声明见 `dytes.json`；初始化文件为 `setup.json`。
 
@@ -82,7 +81,7 @@ cargo build --release
 ## 已知限制
 
 - 外部库路径固定为 `./libary/*`；
-- 输出缓冲区固定 64 KiB；
+- 输出缓冲区 64 KiB（`kv_search` 为 1 MiB）；
 - 插件与系统库加载后常驻；
 - 同一线程禁止插件重入；
 - `content_html` 暂为空字符串。

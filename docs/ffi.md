@@ -1,7 +1,7 @@
 # chatllm C ABI 接口
 
 `chatllm` 编译为 `cdylib`，导出 C ABI `post_*` 函数。
-对话流程为 `think → plugins → reply`；`check` 已移除，后续以插件形式提供。
+对话流程为 `think → chat_plugins → reply`；`check` 已移除，后续以插件形式提供。
 
 ## 1. 调用约定
 

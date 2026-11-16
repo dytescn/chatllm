@@ -33,9 +33,9 @@ cargo build --release
 
 | 依赖 | 版本 | 用途 |
 | --- | --- | --- |
-| `database` | 1.0.6 | SQLite：`dialogue.db`、`info.db` |
+| `database` | 1.0.6 | SQLite：`dialogue.db` |
 | `designdb` | 1.0.4 | 每个对话 UUID 一个消息库 |
-| `kv_lib` | 0.1.4 | `chat_think` / `chat_plugins` / `chat_reply` 检索 |
+| `kv_lib` | 0.1.5 | `chat_think` / `chat_plugins` / `chat_reply` 检索（内置 SQLite，无需 database.dll） |
 | `plugin_lib` | 1.0.21 | 插件能力清单 |
 
 ## 4. 数据库与配置
@@ -57,7 +57,7 @@ cargo build --release
 ## 5. 注意事项
 
 - 外部库路径固定为 `./libary/*`，未配置化；
-- 输出缓冲区固定 64 KiB；
+- 输出缓冲区 64 KiB（`kv_search` 为 1 MiB）；
 - 插件与系统库加载后常驻；
 - 同一线程禁止插件重入；
 - 临时文件放在会话 scratch 目录，不要留在仓库根目录。
