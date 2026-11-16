@@ -47,8 +47,14 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        platform: ${{ fromJson(needs.prepare.outputs.platforms) }}
-    runs-on: ${{ matrix.platform == 'windows' && 'windows-latest' || matrix.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+        include:
+          - platform: windows
+            os: windows-latest
+          - platform: linux
+            os: ubuntu-latest
+          - platform: macos
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
