@@ -108,7 +108,9 @@ jobs:
           bin_dir="${RUNNER_TEMP}/dytes-bin"
           mkdir -p "${bin_dir}"
           # 走 API 下载资产：release 的 github.com/download 直链在 runner 上返回 404
-          meta=$(curl -fsSL "https://api.github.com/repos/dytescn/dytes/releases/tags/${DYTES_VERSION}")
+          # 匿名 API 会被 runner 共享 IP 的限流偶发 403，这里带重试
+          meta=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 \
+            "https://api.github.com/repos/dytescn/dytes/releases/tags/${DYTES_VERSION}")
           asset_id=$(printf '%s' "${meta}" | tr -d '\n ' \
             | grep -o "\"id\":[0-9]*,\"node_id\":\"[^\"]*\",\"name\":\"${asset}\"" \
             | head -1 | sed 's/.*"id":\([0-9]*\),.*/\1/')
