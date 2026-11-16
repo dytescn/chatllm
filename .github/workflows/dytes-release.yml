@@ -94,6 +94,7 @@ jobs:
           cmake --build build --config Release
 
       - name: Publish with dytes
-        uses: dytescn/dytes@v0.2.2
+        uses: dytescn/dytes@v0.2.1
         with:
           command: publish
+          version: v0.2.1
