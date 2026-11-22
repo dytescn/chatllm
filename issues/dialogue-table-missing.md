@@ -2,7 +2,7 @@
 
 - 来源：GitHub issue [#12](https://github.com/dytescn/chatllm/issues/12)
 - 报告人：`funxsayhi`
-- 状态：open（2026-11-22 创建；截至本次同步 21 条评论，最后更新 10:56 UTC）
+- 状态：open（2026-11-22 创建；截至本次同步 56 条评论，最后更新 11:47 UTC）
 - 包：`chatllm`（`type: sys`）
 - 发现日期：2026-11-22
 
@@ -75,9 +75,60 @@
 - 因此这次 `dytes update` 不能证明 `setup.json` 被重新执行，`dialogue` 表仍不会创建；
 - 需要确认锁文件中 chatllm 的版本，以及执行更新的 dytes 版本（`dytes --version`）。
 
+## 后续进展（2026-11-22 11:47 UTC 同步）
+
+新增评论 #22–#56。其中 #56 是完整的两轮 `dytes update` 日志，给出了结论性信息。
+
+### 0.2.3：Linux 包缺失导致下载失败
+
+```text
+更新系统库: chatllm (声明版本 0.2.2)
+  远程版本: 0.2.3
+  下载: system/chatllm/0.2.3/linux/setup.json
+  下载最终失败: S3 HEAD 请求失败: system/chatllm/0.2.3/linux/setup.json (service error)
+更新失败: 以下更新失败:
+  - sys chatllm: 下载系统库 setup.json 失败
+```
+
+对应仓库侧的发布问题：workflow 在 dytes v0.2.18 下查找 `dytes-linux` / `dytes-macos`，实际资产名是 `dytes-linux.bin` / `dytes-macos.bin`，导致 Linux/macOS 发布失败。已修复并发布 0.2.5。
+
+### 0.2.5：下载与校验成功，但 init 未执行
+
+```text
+更新系统库: chatllm (声明版本 0.2.2)
+  远程版本: 0.2.5
+  下载: system/chatllm/0.2.5/linux/setup.json -> .../libary/setup.json
+  校验通过: setup.json (db00eeb60c2df763...)
+  系统库更新完成: chatllm v0.2.5
+
+执行 init 脚本...
+  检测到 1 个 Web 包需要执行 init 脚本，统一处理...
+  执行 init 脚本失败: 未找到 cyctron（cyctron / cyctron.exe / cyctron.bin / cyctron.app）
+进度: 100.0% - 部分更新失败
+
+更新失败: 以下更新失败:
+  - init 脚本: 未找到 cyctron（cyctron / cyctron.exe / cyctron.bin / cyctron.app）
+```
+
+随后运行 `./chatbot` 仍报 `no such table: dialogue`，与 init 未执行一致。
+
+## 根因与建议
+
+**根因**：`dytes update` 在执行任何 init 脚本前无条件调用 `start_cyctron()`。该环境（`/home/funx/huggingface/train_chat`）没有 cyctron，因此 chatllm 这种只做 FFI 调用的 sys 包 init 也被跳过，`dialogue` 表未创建。
+
+dytes 侧建议：
+
+1. sys 包的 `setup.json` 不需要 cyctron，按包类型分别处理：sys 直接走 FFI，只有 web 包才启动 cyctron；
+2. 或在缺少 cyctron 时仍执行 sys 包 init，并给出明确警告；
+3. 当前绕过方式：在应用目录提供 cyctron，或手动执行 `libary/chatllm/setup.json` 中的两条 SQL。
+
+chatllm 侧已完成：
+
+- `setup.json` 的 `path` 改为 `dialogue`（database 1.0.6 仅接受 `[A-Za-z0-9_-]`）；
+- 发布 0.2.5，Linux/macOS 产物已补齐。
+
 ## 待确认
 
-- 复现环境与 `chatllm` / `database` 的实际版本；
-- 锁文件中 chatllm 的版本（若已记录为 0.2.2，`update_sys` 会判定“已是最新版本”并跳过下载与 init）；
-- 安装目录下 `database/dialogue.db` 是否存在、schema 内容；
-- 安装日志中 `setup.json` 的 `init` 执行结果。
+- 用户环境是否能提供 cyctron（`dytes update` 的 init 依赖它）；
+- dytes 是否修复 sys init 的 cyctron 依赖；
+- 用户手动执行 `setup.json` 后 `dialogue` 表是否创建成功。
