@@ -1,7 +1,8 @@
 // src/utils/dialogue.rs
 //! 对话索引（SQLite `dialogue.db` 的 `dialogue` 表）。
 //!
-//! 表结构以 `docs/db.md` 为准，由 `setup.json` 创建；本模块不再建表或补列。
+//! 表结构以 `docs/db.md` 为准，由 `setup.json` 创建；运行时首次访问还会执行
+//! 同一套幂等建表/补列语句，避免宿主未执行 init 时出现 `no such table`。
 //! 消息操作见 `utils::message`，业务错误码见 `utils::errcode`。
 
 use crate::utils::db::{db_execute, db_query, db_update};
@@ -10,8 +11,46 @@ use crate::utils::errcode::ChatError;
 use crate::utils::message;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 
 pub(crate) const DIALOGUE_DB: &str = "dialogue";
+
+/// `dialogue` 表结构，需与 `setup.json` 保持一致。
+const SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS dialogue (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        token_count INTEGER NOT NULL DEFAULT 0,
+        status INTEGER NOT NULL DEFAULT 0,
+        is_pinned INTEGER NOT NULL DEFAULT 0,
+        is_archived INTEGER NOT NULL DEFAULT 0,
+        show_status INTEGER NOT NULL DEFAULT 1,
+        system_prompt TEXT,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        last_seq INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );";
+
+/// 旧库补列；列已存在时 database 返回 `500101`，忽略即可。
+const SYSTEM_PROMPT_SQL: &str = "ALTER TABLE dialogue ADD COLUMN system_prompt TEXT;";
+
+static SCHEMA_READY: OnceLock<()> = OnceLock::new();
+
+/// 确保 `dialogue` 表存在。
+///
+/// 安装期的 `setup.json` 可能因宿主没有执行 init（例如缺少 cyctron）而没有运行；
+/// 首次访问时再幂等执行一次建表/补列，保证对话接口不依赖安装器状态。
+fn ensure_schema() -> Result<()> {
+    if SCHEMA_READY.get().is_some() {
+        return Ok(());
+    }
+    db_update(DIALOGUE_DB, SCHEMA_SQL).context("创建 dialogue 表失败")?;
+    if let Err(error) = db_update(DIALOGUE_DB, SYSTEM_PROMPT_SQL) {
+        println!("[dialogue] ensure_schema: 跳过补列（{}）", error);
+    }
+    let _ = SCHEMA_READY.set(());
+    Ok(())
+}
 
 const DEFAULT_PAGE_SIZE: i64 = 20;
 const MAX_PAGE_SIZE: i64 = 100;
@@ -86,6 +125,7 @@ fn page_result(list: Vec<Value>, page: &DialoguePage, total: u64) -> Value {
 }
 
 fn query_total(where_clause: &str) -> Result<u64> {
+    ensure_schema()?;
     let rows = db_query(
         DIALOGUE_DB,
         &format!("SELECT count(*) AS n FROM dialogue WHERE {}", where_clause),
@@ -129,6 +169,7 @@ pub fn create_dialogue_with(
     let system = system_prompt
         .map(|text| esc(text))
         .unwrap_or_else(|| "NULL".to_string());
+    ensure_schema()?;
     let sql = format!(
         "INSERT INTO dialogue
          (id, title, is_pinned, is_archived, show_status, system_prompt,
@@ -149,6 +190,7 @@ pub fn get_dialogue(id: &str) -> Result<Option<Value>> {
     if !valid_uuid(id) {
         bail!("非法 uuid: {}", id);
     }
+    ensure_schema()?;
     let rows = db_query(
         DIALOGUE_DB,
         &format!("SELECT * FROM dialogue WHERE id = {} LIMIT 1", esc(id)),
@@ -224,6 +266,7 @@ pub fn update_dialogue(id: &str, p: &DialoguePatch<'_>) -> Result<()> {
         bail!("非法 uuid: {}", id);
     }
 
+    ensure_schema()?;
     let mut sets: Vec<String> = Vec::new();
     if let Some(v) = p.title {
         sets.push(format!("title = {}", esc(v)));
@@ -258,6 +301,7 @@ pub fn delete_dialogue(id: &str) -> Result<()> {
     if !valid_uuid(id) {
         bail!("非法 uuid: {}", id);
     }
+    ensure_schema()?;
     designdb::delete(id, message::MESSAGES, Some(json!({})))?;
     db_update(
         DIALOGUE_DB,

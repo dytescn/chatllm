@@ -61,6 +61,7 @@ cargo build --release
 - `cargo test` 与 `ts/*.ts` 实际读取仓库根的 `testenv/`（不入库，可随时删除重建），
   需要 `libary/` 与 `database/dialogue.db` 等运行数据。
 - 目录布局、依赖下载规则、`testenv/` 组装与排查见 skill `chatllm-testenv`。
+- `setup.json` 的请求格式、`path` 规则与 dytes 处理方式见 skill `chatllm-setup`。
 - 缺少 `testenv/` 时，`cargo test` 的数据用例自动跳过，`ts/*.ts` 会直接报错。
 
 ## 6. 注意事项

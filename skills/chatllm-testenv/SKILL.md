@@ -19,6 +19,7 @@ description: chatllm 本地测试环境：dytes test（0.2.3+）的 .dytes 目�
 
 - 当前调试包（chatllm）的产物始终使用 `target/release/` 下的本地文件，不会复制进 `.dytes/env/`；
 - 不执行依赖包的 `setup.json` / init 脚本，因此不会创建 `database/dialogue.db` 等运行数据。
+- sys 包 `setup.json` 的格式与 dytes 处理规则见 skill `chatllm-setup`。
 
 `tests/common/mod.rs` 与 `ts/*.ts` 都以仓库根的 `testenv/` 为工作目录（各库内部用
 `./libary/...`、`./database/...` 相对路径），所以跑测试前必须把 `testenv/` 准备好。
