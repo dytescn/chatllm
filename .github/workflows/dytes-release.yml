@@ -97,6 +97,7 @@ jobs:
         shell: bash
         env:
           DYTES_VERSION: v0.2.18
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           case "${RUNNER_OS}" in
@@ -110,6 +111,8 @@ jobs:
           # 走 API 下载资产：release 的 github.com/download 直链在 runner 上返回 404
           # 匿名 API 会被 runner 共享 IP 的限流偶发 403，这里带重试
           meta=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/dytescn/dytes/releases/tags/${DYTES_VERSION}")
           asset_id=$(printf '%s' "${meta}" | tr -d '\n ' \
             | grep -o "\"id\":[0-9]*,\"node_id\":\"[^\"]*\",\"name\":\"${asset}\"" \
@@ -118,7 +121,8 @@ jobs:
             echo "::error::未在 ${DYTES_VERSION} 找到资产 ${asset}"
             exit 1
           fi
-          curl -fsSL -H "Accept: application/octet-stream" \
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/octet-stream" \
             "https://api.github.com/repos/dytescn/dytes/releases/assets/${asset_id}" \
             -o "${bin_dir}/${bin}"
           chmod +x "${bin_dir}/${bin}" 2>/dev/null || true
