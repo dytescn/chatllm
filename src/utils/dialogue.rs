@@ -185,6 +185,25 @@ pub fn create_dialogue_with(
     Ok(uuid)
 }
 
+/// 写入对话的 system prompt（think 命中 skills 后由流程层调用）。
+pub fn update_system_prompt(id: &str, system_prompt: &str) -> Result<()> {
+    println!("[dialogue] update_system_prompt: id={}", id);
+    if !valid_uuid(id) {
+        bail!("非法 uuid: {}", id);
+    }
+    ensure_schema()?;
+    db_update(
+        DIALOGUE_DB,
+        &format!(
+            "UPDATE dialogue SET system_prompt = {}, updated_at = datetime('now') WHERE id = {}",
+            esc(system_prompt),
+            esc(id)
+        ),
+    )
+    .with_context(|| format!("更新对话 {} 的 system_prompt 失败", id))?;
+    Ok(())
+}
+
 pub fn get_dialogue(id: &str) -> Result<Option<Value>> {
     println!("[dialogue] get: id={}", id);
     if !valid_uuid(id) {
@@ -382,7 +401,7 @@ pub fn dialogue_detail(
 }
 
 /// 标题：显式 `title` 优先，否则取 `prompt` 前 20 字符。
-fn new_title(title: Option<&str>, prompt: &str) -> String {
+pub fn new_title(title: Option<&str>, prompt: &str) -> String {
     if let Some(title) = title.map(str::trim).filter(|s| !s.is_empty()) {
         return title.to_string();
     }

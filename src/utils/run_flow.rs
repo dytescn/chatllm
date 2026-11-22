@@ -1,98 +1,87 @@
 // src/utils/run_flow.rs
-//! 正常对话流程：`think → plugins → reply`。
+//! 对话流程：`contents → think → plugins → reply → content`。
 //!
-//! FFI 层只负责参数解析与响应写回；新建 / 续聊、写 user 与 assistant 消息、
-//! 各阶段检索与调用都集中在这里。
+//! - 输入已存在的 `dialogue_uid` 与文字内容；
+//! - think 生成 `think_res(prompts, contents)`；
+//! - plugins 接收 `think_res`，生成 `plugins_res(contents)`；
+//! - reply 处理 `plugins_res.contents`，返回最终内容。
+//!
+//! 本模块只负责流程，不负责对话的生命周期：新建 / 续聊、写 user 消息由
+//! [`crate::utils::chat::chat_message`] 完成，FFI 层只做参数解析与响应写回。
+//!
+//! 轮次记录按阶段增量写入：think 完成后先落库，plugins / reply 完成后补齐。
+//! 各阶段的轮次 JSON 由对应模块生成（think / taskflow / reply）。
 
-use crate::ffi::types::ChatFlow;
+use crate::ffi::types::ChatDialogue;
 use crate::utils::dialogue;
 use crate::utils::errcode::ChatError;
 use crate::utils::message;
-use crate::utils::reply::Reply;
-use crate::utils::{chat_plugins, think};
+use crate::utils::reply;
+use crate::utils::{chat_plugins, skills, think};
 use serde_json::{json, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 执行一次正常对话。
-pub fn run(req: &ChatFlow) -> Result<Value, ChatError> {
-    // think 阶段：用默认分类关键词 base 检索 chat_think，把当前文本传给插件，
-    // 汇总 prompts / outputs 并记录起止时间。
-    let think = think::run(&req.prompt, think::TOP_K);
+use crate::utils::time::now_ms;
 
-    let think_plugin_uuid = think.hit.as_ref().and_then(|hit| hit.plugin_uuid.clone());
+/// 在已有对话上执行一次正常对话。
+///
+/// `req.uuid` 由调用方（[`crate::utils::chat::chat_message`]）保证已存在，
+/// 本函数不再校验其真实性。
+pub fn run(req: &ChatDialogue) -> Result<Value, ChatError> {
+    // 输入：本轮文字内容。
+    let contents = vec![req.content.clone()];
+
+    // 对话生命周期由调用方负责，这里直接使用。
+    let dialogue_uid = req.uuid.as_deref().unwrap_or_default();
+
+    // think 阶段：命中结果用于读取 skills，并写入对话的 system prompt。
+    let think = think::think_run(&contents[0], think::TOP_K);
+
     let system_prompt = think
-        .hit
-        .as_ref()
-        .and_then(|hit| think::skills_for(hit.plugin_uuid.as_deref(), hit.plugin_name.as_deref()));
+        .plugins_uid
+        .as_deref()
+        .and_then(|uid| skills::skills_for(Some(uid), None));
 
-    // 只有调用方显式传入的 plugin_uuid 才能作为对话 id；think 命中的 uuid
-    // 只用于标识插件 / 读取 skills，不能复用为对话 id，否则命中同一插件的
-    // 多个对话会互相覆盖。
-    let dialogue_plugin_uuid = req.plugin_uuid.as_deref();
-    let response_plugin_uuid = req
-        .plugin_uuid
-        .clone()
-        .or_else(|| think_plugin_uuid.clone());
+    if let Some(system_prompt) = system_prompt.as_deref() {
+        dialogue::update_system_prompt(dialogue_uid, system_prompt)
+            .map_err(|e| ChatError::Load(e.to_string()))?;
+    }
 
-    let (uuid, created) = dialogue::open_dialogue(
-        &req.prompt,
-        req.uuid.as_deref(),
-        dialogue_plugin_uuid,
-        req.title.as_deref(),
-        req.show_status,
-        system_prompt.as_deref(),
-    )?;
+    // think 已完成：先写入轮次记录，plugins / reply 阶段再补齐。
+    let think_json = think.to_round_json();
+    let mut round_content = json!([{ "think": think_json.clone() }]);
+    let round = message::start_round(dialogue_uid, &contents[0], round_content.clone())
+        .map_err(|e| ChatError::Append(e.to_string()))?;
+    message::append_phase(dialogue_uid, "think", think_json)
+        .map_err(|e| ChatError::Append(e.to_string()))?;
 
-    // chat_plugins 阶段：检索关键词直接来自 think 的 prompts，
-    // 输入文本使用 think 的 outputs；每条以上一条的结束时间开始。
-    let plugin_inputs = think.outputs.clone();
-    let chat_phase = chat_plugins::run(&think.prompts, &plugin_inputs, think.end_time);
-    let plugin_result = chat_plugins::join_results(&chat_phase.outputs);
+    // think → plugins：prompts 用于检索，outputs 作为输入。
+    let chat_phase = chat_plugins::run(&think.prompts, &think.outputs, think.end_time);
+    let plugins_res = chat_phase.res();
 
-    // reply 阶段：合并插件结果生成最终 assistant 内容。
+    let plugins_json = chat_phase.to_json();
+    round_content[0]["plugins"] = plugins_json.clone();
+    message::update_round(dialogue_uid, &round, &round_content, None)
+        .map_err(|e| ChatError::Append(e.to_string()))?;
+    message::append_phase(dialogue_uid, "plugins", plugins_json)
+        .map_err(|e| ChatError::Append(e.to_string()))?;
+
+    // plugins_res.contents → reply → 最终内容。
+    let reply_input = chat_plugins::join_results(&plugins_res.contents).unwrap_or_default();
     let reply_start = now_ms();
-    let reply = Reply::from_result(plugin_result.clone(), &req.prompt);
+    let reply = reply::from_contents(&plugins_res.contents, &contents[0]);
     let reply_end = now_ms();
 
-    dialogue::append_assistant(&uuid, &reply.content)?;
+    let reply_json = reply.to_round_json(reply_start, reply_end, &reply_input);
+    round_content[0]["reply"] = reply_json.clone();
+    message::update_round(dialogue_uid, &round, &round_content, Some(&reply.content))
+        .map_err(|e| ChatError::Append(e.to_string()))?;
+    message::append_phase(dialogue_uid, "reply", reply_json)
+        .map_err(|e| ChatError::Append(e.to_string()))?;
 
-    let round = json!([
-        {
-            "think": {
-                "start_time": think.start_time,
-                "input": { "content": think.input },
-                "prompts": think.prompts.clone(),
-                "calls": [],
-                "outputs": think.outputs.clone(),
-                "end_time": think.end_time,
-                "status": think.status
-            },
-            "plugins": chat_phase.to_json(),
-            "reply": {
-                "start_time": reply_start,
-                "input": { "content": plugin_result.unwrap_or_default() },
-                "calls": [],
-                "outputs": [reply.content],
-                "end_time": reply_end,
-                "status": "ok"
-            }
-        }
-    ]);
-    message::append_round(&uuid, round).map_err(|e| ChatError::Append(e.to_string()))?;
+    dialogue::append_assistant(dialogue_uid, &reply.content)?;
 
     Ok(json!({
-        "uuid": uuid,
-        "created": created,
-        "prompt": req.prompt,
-        "max_tokens": req.max_tokens,
-        "route": Value::Null,
-        "plugin_uuid": response_plugin_uuid,
+        "uuid": dialogue_uid,
+        "content": reply.content,
     }))
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
 }

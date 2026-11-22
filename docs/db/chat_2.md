@@ -7,7 +7,7 @@
   "_id": "2f8c6a41-7d3e-4b9a-8c5d-1e0f2b7a9c34",
   "dialogue_id": "11111111-1111-4111-8111-111111111111",
   "seq": 1,
-  "role": "round",
+  "user": { "content": "你好" },
   "content": [
     {
       "think": {
@@ -48,6 +48,7 @@
       }
     }
   ],
+  "sys": { "content": "你好" },
   "status": "ok",
   "created_at": 1793785051624
 }

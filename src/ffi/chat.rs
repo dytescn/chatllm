@@ -2,8 +2,8 @@
 //
 // chatllm 对话相关 FFI 接口，调用约定见 `docs/ffi.md`：
 // `int (*)(const char *json_in, char *json_out);`
-// 本层只做输入解析与错误码映射，业务逻辑在 `utils::run_flow` / `utils::dialogue`。
-use crate::ffi::types::{ChatFlow, Dialogue, DialogueListReq, DialogueQuery};
+// 本层只做输入解析与错误码映射，业务逻辑在 `utils::chat` / `utils::run_flow` / `utils::dialogue`。
+use crate::ffi::types::{ChatDialogue, ChatFlow, Dialogue, DialogueListReq, DialogueQuery};
 use crate::utils::cjson::{err_msg, read_body, write_error, write_success};
 use crate::utils::dialogue;
 use serde_json::json;
@@ -97,7 +97,7 @@ pub extern "C" fn update_dialogue(json_in: *const c_char, json_out: *mut c_char)
 ///
 /// FFI-Symbol：`chat`
 /// 入参：`ChatFlow`（`prompt` 必填；`uuid` 非空时续聊已有对话）
-/// 出参：`{ uuid, created, prompt, max_tokens, route }`
+/// 出参：`{ uuid, created, content }`
 #[unsafe(no_mangle)]
 pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     let body = match read_body(json_in) {
@@ -109,20 +109,22 @@ pub extern "C" fn post_message(json_in: *const c_char, json_out: *mut c_char) ->
         Err(e) => return write_error(json_out, 400102, &format!("invalid json: {}", e)),
     };
 
-    match crate::utils::run_flow::run(&req) {
+    let dialogue = ChatDialogue {
+        uuid: req.uuid,
+        content: req.prompt,
+        title: req.title,
+        show_status: req.show_status,
+        files: Vec::new(),
+    };
+    match crate::utils::chat::chat_message(&dialogue) {
         Ok(data) => write_success(json_out, "success", data),
         Err(e) => write_error(json_out, e.code(), &e.message()),
     }
 }
 
+
+
 /// `chat` 的导出入口。
-///
-/// cyctron 按 `FFI-Symbol: chat` 拼成 `post_chat`，这里作为
-/// [`post_message`] 的别名，保持宿主 / 文档调用一致。
-#[unsafe(no_mangle)]
-pub extern "C" fn post_chat(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    post_message(json_in, json_out)
-}
 
 /// `dialogue_list` 的导出入口。
 #[unsafe(no_mangle)]

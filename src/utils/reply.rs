@@ -6,13 +6,15 @@
 //! 未命中或调用失败时原样输出 plugins 结果。
 
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::utils::chat_plugins;
 use crate::utils::dialogue;
 use crate::utils::kv;
 use crate::utils::message;
-use crate::utils::think;
+use crate::utils::plugins_callback;
+use crate::utils::plugins_lib;
+use crate::utils::skills;
 
 /// reply 插件检索集合。
 pub const REPLY_COLLECTION: &str = "chat_reply";
@@ -22,17 +24,12 @@ pub const BASE_KEYWORD: &str = "base";
 pub const TOP_K: i64 = 5;
 
 /// 一条命中的 reply 插件记录。
+///
+/// kv 命中统一提供 `plugins_uid`，插件名与 FFI 符号在调用前通过
+/// [`plugins_lib::plugin_call_params`] 查询。
 #[derive(Debug, Clone, Default)]
 pub struct ReplyHit {
-    pub key: Option<String>,
-    /// 对话 id，兼容 `plugins_uid` / `plugin_uuid`。
     pub plugins_uid: Option<String>,
-    /// 资源包名，用于读取 `./plugins/<name>/<name>.md`。
-    pub plugin_name: Option<String>,
-    /// 插件名或供应商库名。
-    pub plugin: String,
-    /// 插件 FFI 符号，默认 `chat`。
-    pub ffi_symbol: String,
 }
 
 /// 一条组装好的助手回复。
@@ -57,9 +54,9 @@ impl Reply {
         let html = String::new();
         println!(
             "[reply] Reply::new: content={:?}, html_len={}, think={:?}",
-            preview(&content, 300),
+            content,
             html.len(),
-            think.as_deref().map(|v| preview(v, 200))
+            think
         );
         Self {
             content,
@@ -70,35 +67,54 @@ impl Reply {
         }
     }
 
-    /// 使用 plugins 结果生成回复。
-    ///
-    /// 先尝试 `chat_reply`；未命中或失败时原样返回 plugins 结果。
-    pub fn from_result(result: Option<String>, input: &str) -> Self {
-        println!(
-            "[reply] from_result 输入: prompt={:?}, result={:?}",
-            preview(input, 300),
-            result.as_deref().map(|v| preview(v, 500))
-        );
-        let (content, resource_hit) = match result {
-            Some(value) if !value.trim().is_empty() => {
-                let (plugin_reply, resource_hit) = reply_with_plugin(&value);
-                if let Some(reply) = plugin_reply {
-                    return reply;
-                }
-                (value, resource_hit)
-            }
-            _ => (fallback(None, input), false),
-        };
-        println!("[reply] 最终 content: {:?}", preview(&content, 500));
-        let mut reply = Self::new(&content, None);
-        reply.resource_hit = resource_hit;
-        reply
+    /// 生成轮次记录里的 `reply` 段。
+    pub fn to_round_json(&self, start_time: i64, end_time: i64, input: &str) -> Value {
+        json!({
+            "start_time": start_time,
+            "input": { "content": input },
+            "calls": [],
+            "outputs": [self.content.clone()],
+            "end_time": end_time,
+            "status": "ok",
+        })
     }
+}
 
-    /// 兼容入口：语义与 [`Reply::from_result`] 相同。
-    pub fn from_think(think: Option<String>, input: &str) -> Self {
-        Self::from_result(think, input)
-    }
+/// 执行 reply 阶段：先尝试 `chat_reply`，未命中或失败时回退到上游结果。
+pub fn reply_run(result: Option<String>, input: &str) -> Reply {
+    println!(
+        "[reply] reply_run 输入: prompt={:?}, result={:?}",
+        input, result
+    );
+    let (content, resource_hit) = match result {
+        Some(value) if !value.trim().is_empty() => {
+            let (plugin_reply, resource_hit) = reply_with_plugin(&value);
+            if let Some(reply) = plugin_reply {
+                return reply;
+            }
+            (value, resource_hit)
+        }
+        _ => (fallback(None, input), false),
+    };
+    println!("[reply] 最终 content: {:?}", content);
+    let mut reply = Reply::new(&content, None);
+    reply.resource_hit = resource_hit;
+    reply
+}
+
+/// 用 plugins 阶段的 `contents` 生成回复。
+pub fn from_contents(contents: &[String], input: &str) -> Reply {
+    reply_run(chat_plugins::join_results(contents), input)
+}
+
+/// 兼容入口：语义与 [`reply_run`] 相同。
+pub fn from_result(result: Option<String>, input: &str) -> Reply {
+    reply_run(result, input)
+}
+
+/// 兼容入口：语义与 [`reply_run`] 相同。
+pub fn from_think(think: Option<String>, input: &str) -> Reply {
+    reply_run(think, input)
 }
 
 /// 检索 `chat_reply`，取 Top1。
@@ -131,9 +147,7 @@ fn find_hit(input: &str, top_k: i64) -> Result<(Option<ReplyHit>, bool)> {
 fn search_reply(query: &str, top_k: i64) -> Result<(Option<ReplyHit>, bool)> {
     println!(
         "[reply] find 输入: query={:?}, collection={}, top_k={}",
-        preview(query, 300),
-        REPLY_COLLECTION,
-        top_k
+        query, REPLY_COLLECTION, top_k
     );
     let data = kv::search(
         REPLY_COLLECTION,
@@ -143,11 +157,7 @@ fn search_reply(query: &str, top_k: i64) -> Result<(Option<ReplyHit>, bool)> {
         None,
         true,
     )?;
-    let list = data
-        .get("list")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let list = kv::take_list(data);
     println!("[reply] chat_reply 返回 {} 条", list.len());
     for (index, hit) in list.iter().enumerate() {
         println!(
@@ -156,7 +166,7 @@ fn search_reply(query: &str, top_k: i64) -> Result<(Option<ReplyHit>, bool)> {
             hit.get("key").and_then(Value::as_str),
             hit.get("value").and_then(Value::as_str),
             hit.get("meta")
-                .map(|v| preview(&v.to_string(), 300))
+                .map(|v| v.to_string())
                 .unwrap_or_else(|| "null".to_string())
         );
     }
@@ -177,54 +187,30 @@ fn parsed_value(hit: &Value) -> Option<Value> {
         .and_then(|text| serde_json::from_str::<Value>(text).ok())
 }
 
-/// 资源命中：有 plugin_name / kind，但没有可调用插件。
+/// 资源命中：有 plugin_name / kind，但没有 `plugins_uid`。
 pub fn is_resource_hit(hit: &Value) -> bool {
     let meta = hit.get("meta");
     let value = parsed_value(hit);
-    let plugin = str_at(meta, "plugin")
-        .or_else(|| str_at(meta, "lib_name"))
-        .or_else(|| str_at(value.as_ref(), "lib_name"))
-        .or_else(|| str_at(value.as_ref(), "plugin"))
-        .or_else(|| str_at(value.as_ref(), "name"));
+    let has_plugin = str_at(meta, "plugins_uid")
+        .or_else(|| str_at(value.as_ref(), "plugins_uid"))
+        .is_some();
     let resource = str_at(meta, "plugin_name")
         .or_else(|| str_at(value.as_ref(), "plugin_name"))
         .or_else(|| str_at(meta, "kind"))
         .or_else(|| str_at(value.as_ref(), "kind"));
-    plugin.is_none() && resource.is_some()
+    !has_plugin && resource.is_some()
 }
 
-/// 解析命中记录；至少需要插件名。
+/// 解析命中记录；只取统一的 `plugins_uid`。
 pub fn parse_hit(hit: &Value) -> Option<ReplyHit> {
     let meta = hit.get("meta");
     let value = parsed_value(hit);
 
-    let plugin = str_at(meta, "plugin")
-        .or_else(|| str_at(meta, "lib_name"))
-        .or_else(|| str_at(value.as_ref(), "lib_name"))
-        .or_else(|| str_at(value.as_ref(), "plugin"))
-        .or_else(|| str_at(value.as_ref(), "name"))?;
-
-    let plugins_uid = str_at(meta, "plugins_uid")
-        .or_else(|| str_at(meta, "plugin_uuid"))
-        .or_else(|| str_at(Some(hit), "plugins_uid"))
-        .or_else(|| str_at(Some(hit), "plugin_uuid"))
-        .or_else(|| str_at(value.as_ref(), "plugins_uid"))
-        .or_else(|| str_at(value.as_ref(), "plugin_uuid"));
-
-    let plugin_name = str_at(meta, "plugin_name")
-        .or_else(|| str_at(value.as_ref(), "plugin_name"))
-        .or_else(|| str_at(value.as_ref(), "name"));
-
-    let ffi_symbol = str_at(meta, "ffi_symbol")
-        .or_else(|| str_at(value.as_ref(), "ffi_symbol"))
-        .unwrap_or_else(|| "chat".to_string());
+    let plugins_uid =
+        str_at(meta, "plugins_uid").or_else(|| str_at(value.as_ref(), "plugins_uid"))?;
 
     Some(ReplyHit {
-        key: str_at(Some(hit), "key"),
-        plugins_uid,
-        plugin_name,
-        plugin,
-        ffi_symbol,
+        plugins_uid: Some(plugins_uid),
     })
 }
 
@@ -246,9 +232,15 @@ fn reply_with_plugin(input: &str) -> (Option<Reply>, bool) {
         }
     };
 
-    let dialogue_id = ensure_dialogue(hit.plugins_uid.as_deref(), hit.plugin_name.as_deref());
+    let plugins_uid = hit.plugins_uid.as_deref();
+    let Some(params) = plugins_uid.and_then(plugins_lib::plugin_params) else {
+        println!("[reply] 未找到 plugins_uid 对应的插件参数");
+        return (None, resource_hit);
+    };
 
-    let content = match chat_plugins::call_plugin(&hit.plugin, &hit.ffi_symbol, input) {
+    let dialogue_id = ensure_dialogue(plugins_uid, Some(&params.plugin_name));
+
+    let content = match plugins_callback::call_plugin(&params.plugin, &params.ffi_symbol, input) {
         Ok(content) => content,
         Err(error) => {
             println!("[reply] 插件调用失败: {:#}", error);
@@ -278,7 +270,7 @@ fn reply_with_plugin(input: &str) -> (Option<Reply>, bool) {
 
 /// 使用 `plugins_uid` 的对话；不存在或没有 uid 时创建。
 fn ensure_dialogue(plugins_uid: Option<&str>, plugin_name: Option<&str>) -> Option<String> {
-    let system = plugin_name.and_then(|name| think::skills_for(None, Some(name)));
+    let system = plugin_name.and_then(|name| skills::skills_for(None, Some(name)));
     let title = "reply 系统对话";
 
     if let Some(id) = plugins_uid.map(str::trim).filter(|id| !id.is_empty()) {
@@ -309,18 +301,6 @@ fn fallback(result: Option<&str>, input: &str) -> String {
         .filter(|text| !text.trim().is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("我收到你的信息了：{input}"));
-    println!("[reply] fallback: {:?}", preview(&text, 300));
+    println!("[reply] fallback: {:?}", text);
     text
-}
-
-fn preview(value: &str, max: usize) -> String {
-    let mut out = String::new();
-    for (index, ch) in value.chars().enumerate() {
-        if index >= max {
-            out.push_str("...");
-            break;
-        }
-        out.push(ch);
-    }
-    out
 }

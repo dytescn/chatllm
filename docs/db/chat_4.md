@@ -8,7 +8,7 @@
   "_id": "c7a2f35d-1e8b-4a6c-9d70-3f5e2b8c1a94",
   "dialogue_id": "11111111-1111-4111-8111-111111111111",
   "seq": 1,
-  "role": "round",
+  "user": { "content": "你好" },
   "content": [
     {
       "think": {
@@ -80,6 +80,7 @@
       }
     }
   ],
+  "sys": { "content": "你好，我是系统信息助手。" },
   "status": "ok",
   "created_at": 1793785051625
 }

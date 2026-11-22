@@ -238,6 +238,66 @@ pub fn get_plugins(request: &Value) -> Result<Value> {
     call_ffi(symbols::GET_PLUGINS, request)
 }
 
+/// 插件调用参数：统一由 `plugins_uid` 查询得到。
+#[derive(Debug, Clone, Default)]
+pub struct PluginParams {
+    /// 插件 uuid
+    pub plugins_uid: String,
+    /// 资源包名 / 插件名，用于定位技能与插件目录
+    pub plugin_name: String,
+    /// 可执行插件名（供应商库名），缺省与 `plugin_name` 相同
+    pub plugin: String,
+    /// 回调 FFI 符号，默认 `chat`
+    pub ffi_symbol: String,
+}
+
+/// 按插件 uuid 查询插件调用参数。
+///
+/// 插件名取 `plugins.name`；可执行插件名优先取插件行的 `plugin` /
+/// `lib_name`；FFI 符号取 `plugin_functions` 首条的 `ffi_symbol`，
+/// 缺失时回退为 `chat`。
+pub fn plugin_params(plugins_uid: &str) -> Option<PluginParams> {
+    let plugin = get_plugins(&json!({ "uuid": plugins_uid })).ok()?;
+
+    let plugin_name = plugin
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())?
+        .to_string();
+
+    let plugin = ["plugin", "lib_name"]
+        .iter()
+        .find_map(|key| {
+            plugin
+                .get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| plugin_name.clone());
+
+    let ffi_symbol = get_functions(&json!({ "plugin_uuid": plugins_uid }))
+        .ok()
+        .and_then(|data| {
+            data.get("list")
+                .and_then(Value::as_array)
+                .and_then(|list| list.first())
+                .and_then(|function| function.get("ffi_symbol"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "chat".to_string());
+
+    Some(PluginParams {
+        plugins_uid: plugins_uid.to_string(),
+        plugin_name,
+        plugin,
+        ffi_symbol,
+    })
+}
+
 /// 新建插件。
 pub fn post_plugins(request: &Value) -> Result<Value> {
     call_ffi(symbols::POST_PLUGINS, request)

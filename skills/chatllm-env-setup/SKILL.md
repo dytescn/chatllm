@@ -58,11 +58,11 @@ cargo build --release
 
 - `dytes test`（0.2.3+）在包目录生成 `.dytes/env/`，其中只有依赖包；当前包产物使用
   `target/release/` 下的本地构建文件。
-- `cargo test` 与 `ts/*.ts` 实际读取仓库根的 `testenv/`（不入库，可随时删除重建），
-  需要 `libary/` 与 `database/dialogue.db` 等运行数据。
-- 目录布局、依赖下载规则、`testenv/` 组装与排查见 skill `chatllm-testenv`。
+- `cargo test` 直接读取 `.dytes/env/`；测试首次运行会自动建表并写入种子对话。
+- 缺少依赖库时测试默认失败并提示先运行 `dytes test`；设置 `CHATLLM_TEST_ALLOW_SKIP=1`
+  可退回跳过模式，`CHATLLM_TESTENV` 可指向其它测试目录。
+- 目录布局、依赖下载规则与排查见 skill `chatllm-testenv`。
 - `setup.json` 的请求格式、`path` 规则与 dytes 处理方式见 skill `chatllm-setup`。
-- 缺少 `testenv/` 时，`cargo test` 的数据用例自动跳过，`ts/*.ts` 会直接报错。
 
 ## 6. 注意事项
 

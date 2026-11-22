@@ -9,7 +9,7 @@
   "_id": "9b4d1e72-6c3a-4f8d-a5e2-7c1b0d3e9f46",
   "dialogue_id": "11111111-1111-4111-8111-111111111111",
   "seq": 1,
-  "role": "round",
+  "user": { "content": "你好" },
   "content": [
     {
       "think": {
@@ -66,6 +66,7 @@
       }
     }
   ],
+  "sys": { "content": "你好do_chat_test" },
   "status": "ok",
   "created_at": 1793785051624
 }

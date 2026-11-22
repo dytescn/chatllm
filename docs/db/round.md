@@ -1,7 +1,12 @@
 # 轮次记录
 
-一次 `chat` 调用写入一条 `role = "round"` 记录，`content` 数组元素包含
-`think` / `plugins` / `reply`。
+一次 `chat` 调用写入一条轮次记录，记录 `user`（用户输入）、`content`
+（`think` / `plugins` / `reply` 数组）与 `sys`（系统回答）。轮次记录没有
+`role` 字段。
+
+记录在 think 阶段完成后立即创建（此时写入 `user`），plugins / reply 阶段
+完成后补齐 `content` 与 `sys`。消息列表按 `seq` 升序返回时，轮次记录与
+assistant 消息可能交错；轮次记录通过 `user` / `sys` 字段识别。
 
 ## 字段
 
@@ -10,8 +15,9 @@
 | `_id` | TEXT | 记录 id，UUID v4 |
 | `dialogue_id` | TEXT | 对话 uuid |
 | `seq` | INTEGER | 递增序号 |
-| `role` | TEXT | 固定 `round` |
+| `user` | OBJECT | `{ content }`，本轮用户输入 |
 | `content` | ARRAY | `[{ think, plugins, reply }]` |
+| `sys` | OBJECT | `{ content }`，系统回答（reply 完成后写入） |
 | `status` | TEXT | `ok` / `skipped` / `error` |
 | `created_at` | INTEGER | Unix 毫秒 |
 
@@ -54,7 +60,7 @@
   "_id": "5e1c7a90-2b4d-4f8a-9c36-7d0b2e5a1f83",
   "dialogue_id": "11111111-1111-4111-8111-111111111111",
   "seq": 3,
-  "role": "round",
+  "user": { "content": "你好" },
   "content": [
     {
       "think": {
@@ -108,6 +114,7 @@
       }
     }
   ],
+  "sys": { "content": "你好do_chat_test" },
   "status": "ok",
   "created_at": 1793785051624
 }
@@ -115,10 +122,11 @@
 
 ## 写入约束
 
-- 一次 `chat` 调用一条 `role = "round"` 记录；
+- 一次 `chat` 调用一条轮次记录（无 `role` 字段）；
 - `content` 元素按 `think` / `plugins` / `reply` 顺序；
 - 每次插件调用（成功 / 失败 / 跳过）写入 `calls`；
 - `prompts` 放在阶段对象内，`params` 记录回调方法完整入参；
 - 阶段与插件调用运行时记录 `start_time` / `end_time`（Unix 毫秒）；
-- 普通消息与轮次记录共用 `dialogue.last_seq`，写入后同步 `message_count`；
-- `message_history` 只把 user / assistant 传给供应商，过滤 `role = round`。
+- 阶段内容同时以独立消息写入（`role = think / plugins / reply`）；
+- 普通消息、阶段消息与轮次记录共用 `dialogue.last_seq`，写入后同步 `message_count`；
+- `message_history` 从轮次记录的 `user` / `sys` 还原 user / assistant 上下文。

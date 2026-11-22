@@ -17,7 +17,7 @@ pub struct Dialogue {
     pub is_pinned: Option<i64>,
     /// 是否归档：0 否，1 是
     pub is_archived: Option<i64>,
-    /// 最大 token 数；仅在响应中回显，不参与对话逻辑
+    /// 兼容字段，当前忽略
     pub max_tokens: Option<i32>,
 }
 
@@ -34,6 +34,22 @@ pub struct DialogueQuery {
     pub limit: Option<i64>,
 }
 
+/// 对话请求（`utils::chat::chat_message` 入参）
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChatDialogue {
+    /// 续聊已有对话的 id；为空时新建对话
+    pub uuid: Option<String>,
+    /// 本轮用户输入
+    pub content: String,
+    /// 新建对话的标题；为空时取 `content` 前 20 字符
+    pub title: Option<String>,
+    /// 新建对话的显示状态：1 正常，2 不显示
+    pub show_status: Option<i64>,
+    /// 附件列表，当前流程预留
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
 /// 对话内容（`post_message` 入参）
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ChatFlow {
@@ -47,7 +63,7 @@ pub struct ChatFlow {
     pub show_status: Option<i64>,
     /// 对话标题；为空时取 prompt 前 20 字符
     pub title: Option<String>,
-    /// 最大 token 数；仅在响应中回显，不参与对话逻辑
+    /// 兼容字段，当前忽略
     pub max_tokens: Option<i32>,
 }
 

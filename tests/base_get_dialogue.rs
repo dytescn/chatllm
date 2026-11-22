@@ -42,10 +42,25 @@ fn get_dialogue_after_post_message_returns_conversation() {
     assert_eq!(res["code"], 200);
 
     let list = res["data"]["messages"]["list"].as_array().unwrap();
-    assert!(list.len() >= 2, "应包含 user 与 assistant 消息");
-    assert_eq!(list[0]["role"], "user");
-    assert_eq!(list[0]["content"], prompt);
-    assert_eq!(list[1]["role"], "assistant");
+    assert!(list.len() >= 2, "应包含轮次记录与 assistant 消息");
+    assert!(
+        list.iter().any(|row| row.get("user").is_some()),
+        "轮次记录应包含 user 内容"
+    );
+    assert!(
+        list.iter().any(|row| row.get("sys").is_some()),
+        "轮次记录应包含 sys 内容"
+    );
+    assert!(
+        list.iter().any(|row| row["role"] == "assistant"),
+        "应包含 assistant 消息"
+    );
+    for phase in ["think", "plugins", "reply"] {
+        assert!(
+            list.iter().any(|row| row["role"] == phase),
+            "应包含 {phase} 阶段消息"
+        );
+    }
 
     chatllm::utils::dialogue::delete_dialogue(&uuid).expect("删除测试对话失败");
 }

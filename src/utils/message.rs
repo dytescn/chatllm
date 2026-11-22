@@ -8,20 +8,14 @@ use crate::utils::designdb;
 use crate::utils::dialogue::{is_valid_uuid, DIALOGUE_DB};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::utils::time::now_ms;
 
 /// designdb 中存放消息的集合名。
 pub(crate) const MESSAGES: &str = "messages";
 
 const DEFAULT_MSG_LIMIT: i64 = 20;
 const MAX_MSG_LIMIT: i64 = 100;
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
 
 fn as_i64(value: Option<&Value>, default: i64) -> i64 {
     match value {
@@ -43,7 +37,7 @@ fn normalize_message(mut doc: Value) -> Value {
     doc
 }
 
-/// 追加一条消息，并把 `dialogue.last_seq` / `message_count` 加一。
+/// 追加一条文本消息，并把 `dialogue.last_seq` / `message_count` 加一。
 pub fn append_message(uuid: &str, role: &str, content: &str) -> Result<()> {
     println!(
         "[message] append: uuid={}, role={}, content={:?}",
@@ -51,6 +45,21 @@ pub fn append_message(uuid: &str, role: &str, content: &str) -> Result<()> {
         role,
         preview(content, 200)
     );
+    insert_message(uuid, role, Value::String(content.to_string()))?;
+    Ok(())
+}
+
+/// 单独追加一条阶段消息（`think` / `plugins` / `reply`）。
+///
+/// `content` 为该阶段的 JSON 对象，与轮次记录 `content` 数组中的元素一致。
+pub fn append_phase(uuid: &str, phase: &str, content: Value) -> Result<()> {
+    println!("[message] append_phase: uuid={}, phase={}", uuid, phase);
+    insert_message(uuid, phase, content)?;
+    Ok(())
+}
+
+/// 插入一条消息，并把 `dialogue.last_seq` / `message_count` 加一。
+fn insert_message(uuid: &str, role: &str, content: Value) -> Result<()> {
     if !is_valid_uuid(uuid) {
         bail!("非法 uuid: {}", uuid);
     }
@@ -92,13 +101,26 @@ pub fn append_message(uuid: &str, role: &str, content: &str) -> Result<()> {
     )
     .with_context(|| format!("刷新 {} 计数失败", uuid))?;
 
-    println!("[message] append 完成: uuid={}, seq={}", uuid, seq);
+    println!(
+        "[message] 插入完成: uuid={}, role={}, seq={}",
+        uuid, role, seq
+    );
     Ok(())
 }
 
-/// 追加一条轮次记录（`role = "round"`），并同步对话计数。
-pub fn append_round(uuid: &str, content: Value) -> Result<()> {
-    println!("[message] append_round: uuid={}", uuid);
+/// 轮次记录引用：用于后续阶段增量写入。
+#[derive(Debug, Clone)]
+pub struct RoundRef {
+    pub message_id: String,
+    pub seq: i64,
+}
+
+/// 开始一条轮次记录，并同步对话计数。
+///
+/// `user` 为本轮用户输入，`content` 为初始阶段内容（通常是 `think`）；
+/// 后续阶段与 `sys` 内容用 [`update_round`] 补齐。
+pub fn start_round(uuid: &str, user: &str, content: Value) -> Result<RoundRef> {
+    println!("[message] start_round: uuid={}", uuid);
     if !is_valid_uuid(uuid) {
         bail!("非法 uuid: {}", uuid);
     }
@@ -123,7 +145,7 @@ pub fn append_round(uuid: &str, content: Value) -> Result<()> {
         "_id": message_id,
         "dialogue_id": uuid,
         "seq": seq,
-        "role": "round",
+        "user": { "content": user },
         "content": content,
         "status": "ok",
         "created_at": now,
@@ -141,7 +163,39 @@ pub fn append_round(uuid: &str, content: Value) -> Result<()> {
     )
     .with_context(|| format!("刷新 {} 计数失败", uuid))?;
 
-    println!("[message] append_round 完成: uuid={}, seq={}", uuid, seq);
+    println!("[message] start_round 完成: uuid={}, seq={}", uuid, seq);
+    Ok(RoundRef { message_id, seq })
+}
+
+/// 用最新内容覆盖轮次记录的 `content`（按 `_id` 定位）。
+///
+/// `sys` 非空时同时写入系统回答内容。
+pub fn update_round(
+    uuid: &str,
+    round: &RoundRef,
+    content: &Value,
+    sys: Option<&str>,
+) -> Result<()> {
+    println!(
+        "[message] update_round: uuid={}, seq={}, sys={}",
+        uuid,
+        round.seq,
+        sys.is_some()
+    );
+    if !is_valid_uuid(uuid) {
+        bail!("非法 uuid: {}", uuid);
+    }
+    let mut set = json!({ "content": content });
+    if let Some(sys) = sys {
+        set["sys"] = json!({ "content": sys });
+    }
+    designdb::update(
+        uuid,
+        MESSAGES,
+        Some(json!({ "_id": round.message_id })),
+        json!({ "$set": set }),
+    )
+    .with_context(|| format!("更新 {} 轮次记录失败", uuid))?;
     Ok(())
 }
 
@@ -155,17 +209,37 @@ fn query_all_messages(uuid: &str) -> Result<Vec<Value>> {
     Ok(all)
 }
 
-/// 读取某对话的 user / assistant 消息（按 seq 升序），供续聊组装上下文。
+/// 读取某对话的 user / assistant 上下文（按 seq 升序）。
+///
+/// 普通 `user` / `assistant` 消息原样返回；轮次记录从 `user` / `sys` 字段
+/// 还原为对应的上下文消息。
 pub fn message_history(uuid: &str) -> Result<Vec<Value>> {
-    let mut all = query_all_messages(uuid)?;
-    all.retain(|message| {
-        matches!(
-            message.get("role").and_then(Value::as_str),
-            Some("user") | Some("assistant")
-        )
-    });
-    println!("[message] history: uuid={}, count={}", uuid, all.len());
-    Ok(all)
+    let all = query_all_messages(uuid)?;
+    let mut history = Vec::new();
+    for message in all {
+        match message.get("role").and_then(Value::as_str) {
+            // 兼容早期单独写入的 user / assistant 消息。
+            Some("user") | Some("assistant") => history.push(message),
+            _ => {
+                if let Some(content) = message
+                    .get("user")
+                    .and_then(|user| user.get("content"))
+                    .and_then(Value::as_str)
+                {
+                    history.push(json!({ "role": "user", "content": content }));
+                }
+                if let Some(content) = message
+                    .get("sys")
+                    .and_then(|sys| sys.get("content"))
+                    .and_then(Value::as_str)
+                {
+                    history.push(json!({ "role": "assistant", "content": content }));
+                }
+            }
+        }
+    }
+    println!("[message] history: uuid={}, count={}", uuid, history.len());
+    Ok(history)
 }
 
 /// 按 `before_id` / `after_id` 游标分页读取消息，并附带 `content_html`。
@@ -211,6 +285,8 @@ pub fn list_messages(
         .into_iter()
         .map(|mut row| {
             if let Some(obj) = row.as_object_mut() {
+                // 列表不返回正文：轮次记录 / 阶段消息的 JSON 可能非常大。
+                obj.remove("content");
                 obj.insert("content_html".to_string(), Value::String(String::new()));
             }
             normalize_message(row)

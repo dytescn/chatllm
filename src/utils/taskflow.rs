@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::utils::designdb;
+use crate::utils::chat_plugins::{ChatPluginCall, ChatPluginsOutcome};
 
 /// taskflow 对象集的 path。
 pub const PATH: &str = "taskflow";
@@ -91,4 +92,18 @@ pub fn plugin_uuid_of(item: &Value) -> Option<String> {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
     })
+}
+
+impl ChatPluginsOutcome {
+    /// 生成轮次记录里的 `plugins` 段。
+    pub fn to_json(&self) -> Value {
+        json!({
+            "start_time": self.start_time,
+            "inputs": self.inputs,
+            "calls": self.calls.iter().map(ChatPluginCall::to_json).collect::<Vec<_>>(),
+            "outputs": self.outputs,
+            "end_time": self.end_time,
+            "status": self.status,
+        })
+    }
 }

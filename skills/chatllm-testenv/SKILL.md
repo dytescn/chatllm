@@ -1,6 +1,6 @@
 ---
 name: chatllm-testenv
-description: chatllm 本地测试环境：dytes test（0.2.3+）的 .dytes 目录布局、依赖在线下载规则、testenv 运行环境组装、隔离与排查。
+description: chatllm 本地测试环境：dytes test（0.2.3+）的 .dytes 目录布局、依赖在线下载规则、cargo test 环境准备、隔离与排查。
 ---
 
 # chatllm 测试环境
@@ -12,17 +12,14 @@ description: chatllm 本地测试环境：dytes test（0.2.3+）的 .dytes 目�
 
 | 目录 | 来源 | 内容 | 是否入库 |
 | --- | --- | --- | --- |
-| `.dytes/env/` | `dytes test` 生成 | **只含依赖包**的安装结果 | 否（`.gitignore` 已忽略 `.dytes/`） |
-| `testenv/` | 本地组装 | 测试实际使用的工作目录：`libary/`、`database/`、`designdb/`、`models/`、`plugins/` 等 | 否（`.gitignore` 已忽略 `/testenv/`） |
+| `.dytes/env/` | `dytes test` 生成 | 依赖包与测试运行数据 | 否（`.gitignore` 已忽略 `.dytes/`） |
 
-`dytes test` **不生成** `testenv/`：
+`cargo test` 直接使用 `.dytes/env/`，不再使用 `testenv/`：
 
 - 当前调试包（chatllm）的产物始终使用 `target/release/` 下的本地文件，不会复制进 `.dytes/env/`；
-- 不执行依赖包的 `setup.json` / init 脚本，因此不会创建 `database/dialogue.db` 等运行数据。
+- `dytes test` 不执行依赖包的 `setup.json` / init 脚本；
+- `tests/common/mod.rs` 首次调用时把工作目录切到 `.dytes/env/`，幂等建表并写入基础对话种子；
 - sys 包 `setup.json` 的格式与 dytes 处理规则见 skill `chatllm-setup`。
-
-`tests/common/mod.rs` 与 `ts/*.ts` 都以仓库根的 `testenv/` 为工作目录（各库内部用
-`./libary/...`、`./database/...` 相对路径），所以跑测试前必须把 `testenv/` 准备好。
 
 ## 2. `dytes test` 的用法（0.2.3+）
 
@@ -88,28 +85,23 @@ dytes test             # 在包目录生成 .dytes/，自检 + 在线下载依�
 }
 ```
 
-## 5. 组装 `testenv/`
-
-`testenv/` 不是 `dytes test` 的产物，需要把依赖库与运行数据放到一起。参考步骤（Windows）：
+## 5. 运行 `cargo test`
 
 ```bash
-cargo build --release
-dytes test                                  # 依赖下载到 .dytes/env/
-
-mkdir -p testenv/libary
-cp -r .dytes/env/libary/. testenv/libary/      # 依赖库
-cp target/release/chatllm.dll testenv/libary/  # 当前包产物
-
-# 运行数据不在 dytes test 范围内：
-# - database/dialogue.db       需要 database 的 init 脚本或 `dytes install` 生成
-# - designdb/、models/、plugins/ 按测试用例需要另行准备
+dytes test     # 依赖下载到 .dytes/env/libary/
+cargo test
 ```
 
-- 也可以把 `testenv` 做成指向已有环境的 junction（`cmd //c mklink /J testenv <目标>`），
-  但目标目录必须同时具备 `libary/` 与 `database/dialogue.db`。
-- `cargo test` 的数据用例在缺少 `testenv/libary/database.dll` 或
-  `testenv/database/dialogue.db` 时会自动跳过；`ts/*.ts` 不会跳过，会直接报错。
-- 删除 `testenv/` 只影响本地测试，不影响构建与发布；需要时按上面步骤重建。
+`tests/common/mod.rs` 的 `db_ready()` / `kv_ready()` 会：
+
+- 默认读取 `.dytes/env/`，可用 `CHATLLM_TESTENV` 指向其它已准备的目录；
+- 首次运行时切到该目录，自动创建 `dialogue` 表并写入 4 条种子对话；
+- 缺少 `libary/database.dll`（或对应平台的库）时**默认让测试失败**并提示先运行
+  `dytes test`，避免“静默 ok”；设置 `CHATLLM_TEST_ALLOW_SKIP=1` 可退回跳过模式。
+
+`base_kv.rs` 会实际调用 `.dytes/env/libary/kv_lib` 的 `kv_collection`。
+
+删除 `.dytes/` 后重新执行 `dytes test` 即可重建环境。
 
 ## 6. 隔离与凭证
 

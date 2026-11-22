@@ -11,7 +11,7 @@
 | `uuid` | string | 否 | 续聊已有对话 |
 | `show_status` | number | 否 | `1` 显示，`2` 不显示 |
 | `title` | string | 否 | 标题；缺省取 `prompt` 前 20 字符 |
-| `max_tokens` | number | 否 | 原样回显 |
+| `max_tokens` | number | 否 | 兼容字段，当前忽略 |
 
 目标对话优先级：`uuid` > 自动生成。
 
@@ -33,10 +33,7 @@
 | --- | --- | --- |
 | `uuid` | string | 对话 id |
 | `created` | boolean | 是否新建 |
-| `prompt` | string | 请求回显 |
-| `max_tokens` | number \| null | 请求回显 |
-| `route` | string \| null | 正常为 `null` |
-| `plugin_uuid` | string \| null | think 命中资源包 uuid |
+| `content` | string | reply 阶段处理后的最终内容 |
 
 ```json
 {
@@ -44,10 +41,7 @@
   "data": {
     "uuid": "11111111-1111-4111-8111-111111111111",
     "created": true,
-    "prompt": "你好",
-    "max_tokens": null,
-    "route": null,
-    "plugin_uuid": null
+    "content": "你好，有什么可以帮你？"
   },
   "msg": "success"
 }
