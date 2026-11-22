@@ -101,8 +101,8 @@ jobs:
           set -euo pipefail
           case "${RUNNER_OS}" in
             Windows) asset="dytes-windows.exe"; bin="dytes.exe" ;;
-            Linux)   asset="dytes-linux";      bin="dytes" ;;
-            macOS)   asset="dytes-macos";      bin="dytes" ;;
+            Linux)   asset="dytes-linux.bin";   bin="dytes" ;;
+            macOS)   asset="dytes-macos.bin";   bin="dytes" ;;
             *) echo "::error::unsupported runner: ${RUNNER_OS}"; exit 1 ;;
           esac
           bin_dir="${RUNNER_TEMP}/dytes-bin"
