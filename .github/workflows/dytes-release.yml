@@ -96,7 +96,7 @@ jobs:
       - name: Publish with dytes
         shell: bash
         env:
-          DYTES_VERSION: v0.2.1
+          DYTES_VERSION: v0.2.18
         run: |
           set -euo pipefail
           case "${RUNNER_OS}" in
