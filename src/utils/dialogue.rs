@@ -31,8 +31,12 @@ const SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS dialogue (
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );";
 
-/// 旧库补列；列已存在时 database 返回 `500101`，忽略即可。
+/// 旧库补列；仅在建表后列仍不存在时执行。
 const SYSTEM_PROMPT_SQL: &str = "ALTER TABLE dialogue ADD COLUMN system_prompt TEXT;";
+
+/// 查询列是否存在；`pragma_table_info` 在 SQLite 3.16+ 可用。
+const SYSTEM_PROMPT_EXISTS_SQL: &str =
+    "SELECT COUNT(*) AS n FROM pragma_table_info('dialogue') WHERE name = 'system_prompt';";
 
 static SCHEMA_READY: OnceLock<()> = OnceLock::new();
 
@@ -40,16 +44,32 @@ static SCHEMA_READY: OnceLock<()> = OnceLock::new();
 ///
 /// 安装期的 `setup.json` 可能因宿主没有执行 init（例如缺少 cyctron）而没有运行；
 /// 首次访问时再幂等执行一次建表/补列，保证对话接口不依赖安装器状态。
+/// 补列前先查 `pragma_table_info`，避免在已有列时产生 `duplicate column` 错误。
 fn ensure_schema() -> Result<()> {
     if SCHEMA_READY.get().is_some() {
         return Ok(());
     }
     db_update(DIALOGUE_DB, SCHEMA_SQL).context("创建 dialogue 表失败")?;
-    if let Err(error) = db_update(DIALOGUE_DB, SYSTEM_PROMPT_SQL) {
-        println!("[dialogue] ensure_schema: 跳过补列（{}）", error);
+    if !system_prompt_column_exists()? {
+        db_update(DIALOGUE_DB, SYSTEM_PROMPT_SQL).context("补充 dialogue.system_prompt 列失败")?;
     }
     let _ = SCHEMA_READY.set(());
     Ok(())
+}
+
+/// `dialogue` 表是否已有 `system_prompt` 列。
+fn system_prompt_column_exists() -> Result<bool> {
+    let rows =
+        db_query(DIALOGUE_DB, SYSTEM_PROMPT_EXISTS_SQL).context("查询 dialogue 表结构失败")?;
+    let count = rows
+        .first()
+        .and_then(|row| row.get("n"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if count == 0 {
+        println!("[dialogue] ensure_schema: 缺少列 system_prompt");
+    }
+    Ok(count > 0)
 }
 
 const DEFAULT_PAGE_SIZE: i64 = 20;

@@ -2,7 +2,8 @@
 
 - 来源：GitHub issue [#12](https://github.com/dytescn/chatllm/issues/12)
 - 报告人：`funxsayhi`
-- 状态：open（2026-11-22 创建；截至本次同步 56 条评论，最后更新 11:47 UTC）
+- 状态：open（2026-11-22 创建；截至 2026-11-27 同步仅 1 条评论，最后更新 2026-11-22 12:33 UTC）
+- 关联：issue [#11](https://github.com/dytescn/chatllm/issues/11)（同日创建，空正文、无评论，疑似重复）
 - 包：`chatllm`（`type: sys`）
 - 发现日期：2026-11-22
 
@@ -132,3 +133,17 @@ chatllm 侧已完成：
 - 用户环境是否能提供 cyctron（`dytes update` 的 init 依赖它）；
 - dytes 是否修复 sys init 的 cyctron 依赖；
 - 用户手动执行 `setup.json` 后 `dialogue` 表是否创建成功。
+
+## 最新进展（2026-11-27 同步）
+
+GitHub 上本 issue 当前只有 1 条评论（2026-11-22 12:32 UTC），此前同步时看到的 56 条评论已不可见；上文“线上讨论”与“后续进展”按当时的记录保留。
+
+当前评论为该用户在新环境下的完整运行日志：
+
+- 对话创建走 `[think] run`，`kv_search` 返回 `400600 unknown collection: chat_think`，think 阶段检索失败；
+- 随后 `[dialogue] create` 插入失败，`[db] call_ffi` 返回 `500101`，最终 `400300 create dialogue failed`；
+- CLI 已提示“对话表未初始化（code=400300）。请先完成 chatllm 初始化（dytes update），再重试。”
+
+结合同期 issue [#13](https://github.com/dytescn/chatllm/issues/13)：用户在 dytes 0.2.26/0.2.27 上重新下载 chatllm 0.2.7 后，`setup.json` 的 init 已能被执行（报 `duplicate column name: system_prompt` 并被 `allow_error` 忽略），说明 cyctron 阻塞已解除，`dialogue` 表也已存在；本 issue 的 `no such table` 应源于旧环境残留，需用户在新环境下重测确认。
+
+仍待处理的是 `chat_think` collection 未导入导致 think 失败；#13 的 init 非幂等问题已在 0.2.8 修复。

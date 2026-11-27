@@ -21,8 +21,9 @@
 `is_pinned DESC, updated_at DESC` 排序。消息新增后同步 `message_count` 与
 `last_seq`。
 
-表由 `setup.json` 在安装期创建；`src/utils/dialogue.rs` 在首次访问时也会幂等执行
-同一套 `CREATE TABLE IF NOT EXISTS` / 补列语句。因此宿主未执行 init（例如缺少
-cyctron）时，对话接口仍会自动建表，不再返回 `no such table: dialogue`。
+表由 `setup.json` 在安装期用 `CREATE TABLE IF NOT EXISTS` 创建（可重复执行）；
+`src/utils/dialogue.rs` 在首次访问时也会执行同一建表语句，并在旧库缺少
+`system_prompt` 列时先查 `pragma_table_info` 再补列。因此宿主未执行 init（例如
+缺少 cyctron）时，对话接口仍会自动建表，不再返回 `no such table: dialogue`。
 
 轮次记录见 [`round.md`](round.md)，普通消息见 [`messages.md`](messages.md)。

@@ -114,12 +114,6 @@ const SEED_SQL: [&str; 4] = [
 
 fn prepare_dialogue_db() {
     chatllm::utils::db::db_update("dialogue", DIALOGUE_SCHEMA).expect("创建 dialogue 表失败");
-    if let Err(error) = chatllm::utils::db::db_update(
-        "dialogue",
-        "ALTER TABLE dialogue ADD COLUMN system_prompt TEXT;",
-    ) {
-        println!("[tests] 补列跳过：{error}");
-    }
     for sql in SEED_SQL {
         chatllm::utils::db::db_update("dialogue", sql).expect("写入测试种子失败");
     }

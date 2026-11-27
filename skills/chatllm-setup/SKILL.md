@@ -54,7 +54,9 @@ description: chatllm 的 setup.json 规范：dytes 0.2.0+ 如何处理、直接 
 - `path` 使用库名，例如 `"dialogue"`，不得写成 `"./dialogue"`。
 - SQL 必须可重复执行：
   - 建表使用 `CREATE TABLE IF NOT EXISTS`；
-  - 补列使用 `ALTER TABLE ... ADD COLUMN`，并设置 `"allow_error": true`。
+  - 补列前先用 `SELECT ... FROM pragma_table_info('<表>')` 判断列是否存在，再执行
+    `ALTER TABLE ... ADD COLUMN`；
+  - 不得用 `"allow_error": true` 掩盖重复列错误；建表已含的列不要再无条件补列。
 - `body` 必须与运行时 FFI 请求一致，字段名、`path`、SQL 不得分叉。
 - `setup.json` 仍是安装期初始化的主入口；运行时兜底不能替代它。
 - 新增表或列时，必须同步更新：
@@ -75,25 +77,21 @@ description: chatllm 的 setup.json 规范：dytes 0.2.0+ 如何处理、直接 
         "path": "dialogue",
         "sql": "CREATE TABLE IF NOT EXISTS dialogue (...);"
       }
-    },
-    {
-      "library": "database",
-      "symbol": "db_update",
-      "body": {
-        "path": "dialogue",
-        "sql": "ALTER TABLE dialogue ADD COLUMN system_prompt TEXT;"
-      },
-      "allow_error": true
     }
   ]
 }
 ```
 
+建表语句已包含 `system_prompt`，旧库补列由运行时 `ensure_schema()` 完成，不再在
+`setup.json` 中重复执行 `ALTER TABLE`，因此不需要 `allow_error`。
+
 ## 4. 运行时兜底
 
 `src/utils/dialogue.rs` 的 `ensure_schema()` 在首次访问对话接口时幂等执行
-`CREATE TABLE IF NOT EXISTS` 与补列，避免宿主没有执行 init（例如缺少 cyctron）
-时返回 `no such table: dialogue`。它使用 `OnceLock` 缓存成功状态，失败时下次重试。
+`CREATE TABLE IF NOT EXISTS`，并在旧库缺少 `system_prompt` 列时先查
+`pragma_table_info` 再补列，避免宿主没有执行 init（例如缺少 cyctron）时返回
+`no such table: dialogue`。它使用 `OnceLock` 缓存成功状态，失败时下次重试；
+查询或补列的真实错误会向上返回，不再被吞掉。
 
 ## 5. 验证方法
 
@@ -118,3 +116,4 @@ cargo test
 | `500100 invalid database name` | `path` 带了 `./` 或路径分隔符 |
 | `未找到 cyctron` | dytes update 的 init 流程问题；chatllm 运行时已不依赖它 |
 | 请求被跳过且无报错 | 检查是否把字段写进了 `headers`，而不是顶层的 `library`/`symbol` |
+| `duplicate column name: xxx` | 补列语句未先查 `pragma_table_info`，重复执行 init 时触发 |
